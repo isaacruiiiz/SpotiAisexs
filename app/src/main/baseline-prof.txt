@@ -1,0 +1,12 @@
+HSPLcom/spotiaisexs/app/MainActivity;->**(**)**
+HSPLcom/spotiaisexs/app/SpotiAisexsApplication;->**(**)**
+HSPLcom/spotiaisexs/app/ui/shell/**->**(**)**
+HSPLcom/spotiaisexs/app/ui/home/**->**(**)**
+HSPLcom/spotiaisexs/app/ui/settings/**->**(**)**
+HSPLcom/spotiaisexs/app/ui/player/**->**(**)**
+HSPLcom/spotiaisexs/app/ui/common/ArtworkImageKt;->**(**)**
+HSPLcom/spotiaisexs/app/ui/common/ExpressiveMotion;->**(**)**
+HSPLcom/spotiaisexs/app/playback/MusicPlayer;->**(**)**
+HSPLcom/spotiaisexs/app/playback/MusicPlaybackService;->**(**)**
+HSPLcom/spotiaisexs/app/data/artwork/ArtworkRepository;->**(**)**
+HSPLcom/spotiaisexs/app/ui/common/ExpressiveHeaderKt;->**(**)**

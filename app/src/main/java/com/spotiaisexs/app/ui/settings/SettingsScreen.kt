@@ -225,6 +225,7 @@ import kotlin.math.roundToLong
 
 private data class AccentPreset(val name: String, val hex: String)
 private val ACCENT_PRESETS = listOf(
+    AccentPreset("Mandarina", "#FF7A45"),
     AccentPreset("Crimson", "#E03030"),
     AccentPreset("Violet", "#7C4DFF"),
     AccentPreset("Ocean", "#2196C6"),

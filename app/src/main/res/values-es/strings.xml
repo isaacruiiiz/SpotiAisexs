@@ -7,6 +7,7 @@
     <string name="nav_feed">Inicio</string>
     <string name="nav_stats">Estadísticas</string>
     <string name="nav_playlists">Listas</string>
+    <string name="nav_search">Buscar</string>
     <string name="nav_create_playlist">Crear / Generar lista</string>
     <string name="update_available">Actualización disponible</string>
     <string name="update">Actualizar</string>

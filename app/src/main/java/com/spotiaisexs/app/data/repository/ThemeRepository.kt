@@ -238,15 +238,15 @@ class ThemeRepository @Inject constructor(
         applicationScope,
         SharingStarted.Eagerly,
         ThemeUiState(
-            darkColorScheme = Md3SchemeBuilder.buildDarkScheme("#E03030", false),
-            lightColorScheme = Md3SchemeBuilder.buildLightScheme("#E03030", false),
-            themeMode = ThemeMode.SYSTEM,
-            colorScheme = Md3SchemeBuilder.buildDarkScheme("#E03030", false),
-            amoled = false,
+            darkColorScheme = Md3SchemeBuilder.buildDarkScheme(ThemePrefs.DEFAULT_ACCENT, true),
+            lightColorScheme = Md3SchemeBuilder.buildLightScheme(ThemePrefs.DEFAULT_ACCENT, false),
+            themeMode = ThemeMode.DARK,
+            colorScheme = Md3SchemeBuilder.buildDarkScheme(ThemePrefs.DEFAULT_ACCENT, true),
+            amoled = true,
             mode = AccentMode.MANUAL,
-            accentColorHex = "#E03030",
+            accentColorHex = ThemePrefs.DEFAULT_ACCENT,
             useCustomFont = true,
-            liquidGlass = false,
+            liquidGlass = true,
         ),
     )
 

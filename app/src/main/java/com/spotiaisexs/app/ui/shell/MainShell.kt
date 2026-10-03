@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Leaderboard
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -291,6 +292,7 @@ fun MainShell(
                 scope.launch { pagerState.animateScrollToPage(index) }
             },
             onOpenGenerator = onOpenGenerator,
+            onOpenSearch = onOpenSearch,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -370,9 +372,11 @@ private fun FloatingNavBar(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     onOpenGenerator: () -> Unit,
+    onOpenSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val liquidGlass = LocalLiquidGlass.current
+    val searchInteraction = remember { MutableInteractionSource() }
     val glassHoverIndex = remember(liquidGlass) { mutableStateOf<Int?>(null) }
     val glassNavBounds = remember { mutableStateMapOf<Int, Rect>() }
     val dockInteraction = remember { MutableInteractionSource() }
@@ -491,6 +495,36 @@ private fun FloatingNavBar(
                                 modifier = Modifier.size(24.dp),
                             )
                         }
+                    }
+                }
+            }
+
+            // Search pinned on its own at the trailing end of the bar, in the
+            // same glass layer (iOS 26 tab bar pattern). On Playlists the
+            // generator button takes that slot so the dock fits narrow phones.
+            if (selectedIndex != tabs.indexOf(MainTab.PLAYLISTS)) {
+                Spacer(Modifier.width(10.dp))
+                Surface(
+                    shape = CircleShape,
+                    color = liquidGlassContainerColor(
+                        MaterialTheme.colorScheme.surfaceContainerHigh,
+                        enabled = liquidGlass,
+                        backdrop = backdrop,
+                    ),
+                    shadowElevation = if (liquidGlass) 0.dp else 12.dp,
+                    tonalElevation = if (liquidGlass) 0.dp else 6.dp,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .liquidGlassChrome(CircleShape, liquidGlass, LiquidGlassPreset.BottomNavigation, backdrop, interactionSource = searchInteraction)
+                        .clickable(interactionSource = searchInteraction, indication = null, onClick = onOpenSearch),
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = androidx.compose.ui.res.stringResource(com.spotiaisexs.app.R.string.nav_search),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(24.dp),
+                        )
                     }
                 }
             }

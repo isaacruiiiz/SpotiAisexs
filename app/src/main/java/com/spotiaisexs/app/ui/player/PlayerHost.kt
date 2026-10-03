@@ -2055,6 +2055,22 @@ private fun FullPlayer(
                     }
                 }
 
+                // OLED (pure-black theme): the artwork hue fades out to true
+                // black at the bottom, so the controls area turns its pixels off.
+                if (MaterialTheme.colorScheme.background == Color.Black) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0.00f to Color.Transparent,
+                                    0.68f to Color.Transparent,
+                                    1.00f to Color.Black,
+                                )
+                            )
+                    )
+                }
+
                 // Lyrics-only readability veil: heavy blur still can't tame a
                 // bright face behind small text, so fade in extra dim on the
                 // lyrics tab. Now Playing tab is untouched.

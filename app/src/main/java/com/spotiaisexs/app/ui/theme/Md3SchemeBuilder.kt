@@ -3,6 +3,7 @@ package com.spotiaisexs.app.ui.theme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -60,7 +61,32 @@ object Md3SchemeBuilder {
             tertiaryHue = hT,
             neutralHue = h,
             amoled = amoled,
+            primaryOverride = vividAccent(hex),
         )
+    }
+
+    /**
+     * Redesign: the accent is used as-is, vivid and functional (Spotify's
+     * single-accent rule), instead of a pastel tone of its hue. Seeds that
+     * would vanish on black (dark artwork colors) or blind (near-white) are
+     * pulled into a readable lightness band; greys stay grey.
+     */
+    internal fun vividAccent(hex: String): Color? {
+        val clean = hex.removePrefix("#")
+        if (clean.length < 6) return null
+        val rgb = clean.take(6).toIntOrNull(16) ?: return null
+        val r = ((rgb ushr 16) and 0xFF) / 255f
+        val g = ((rgb ushr 8) and 0xFF) / 255f
+        val b = (rgb and 0xFF) / 255f
+        val max = maxOf(r, g, b)
+        val min = minOf(r, g, b)
+        val l = (max + min) / 2f
+        val d = max - min
+        val sat = if (d == 0f) 0f else d / (1f - abs(2f * l - 1f))
+        if (sat < 0.08f) return null // grey seed: keep the tonal scheme
+        val satPct = (sat.coerceAtLeast(0.5f) * 100f).roundToInt().coerceAtMost(100)
+        val lightPct = (l.coerceIn(0.55f, 0.72f) * 100f).roundToInt()
+        return hsl(hueOf(hex), satPct, lightPct)
     }
 
     /** Full dynamic light scheme, seeded from [hex]'s hue. */
@@ -109,17 +135,29 @@ object Md3SchemeBuilder {
         neutralHue: Int,
         amoled: Boolean,
         monochrome: Boolean = false,
+        primaryOverride: Color? = null,
     ): ColorScheme {
         val cP = if (monochrome) 0 else CHROMA_PRIMARY
         val cS = if (monochrome) 0 else CHROMA_SECONDARY
         val cT = if (monochrome) 0 else CHROMA_TERTIARY
-        val cN = if (monochrome) 0 else CHROMA_NEUTRAL
-        val cNV = if (monochrome) 0 else CHROMA_NEUTRAL_VARIANT
+        // Redesign: on pure black the surfaces are neutral greys, never tinted
+        // by the accent — color comes from artwork and the accent only.
+        val cN = if (monochrome || amoled) 0 else CHROMA_NEUTRAL
+        val cNV = if (monochrome || amoled) 0 else CHROMA_NEUTRAL_VARIANT
 
+        // Elevation ladder on black: ~#121212 / #1C1C1C / #292929 (lighter = higher).
         val bgL = if (amoled) 0 else 6
-        val sc1L = if (amoled) 4 else 11
-        val sc2L = if (amoled) 8 else 16
-        val sc3L = if (amoled) 12 else 20
+        val sc1L = if (amoled) 7 else 11
+        val sc2L = if (amoled) 11 else 16
+        val sc3L = if (amoled) 16 else 20
+        val onSurfaceL = if (amoled) 96 else 90
+        val onSurfaceVariantL = if (amoled) 70 else 80
+        val primaryCol = primaryOverride ?: hsl(primaryHue, cP, 82)
+        val onPrimaryCol = if (primaryOverride != null) {
+            if (primaryOverride.luminance() > 0.35f) Color(0xFF1A0E08) else Color.White
+        } else {
+            hsl(primaryHue, cP, 16)
+        }
 
         val backgroundCol = if (amoled) Color.Black else hsl(neutralHue, cN, bgL)
         val surfaceCol = if (amoled) Color.Black else hsl(neutralHue, cN, bgL)
@@ -127,8 +165,8 @@ object Md3SchemeBuilder {
         val surfaceLowestCol = if (amoled) Color.Black else hsl(neutralHue, cN, (bgL - 2).coerceAtLeast(0))
 
         val scheme = darkColorScheme(
-            primary = hsl(primaryHue, cP, 82),
-            onPrimary = hsl(primaryHue, cP, 16),
+            primary = primaryCol,
+            onPrimary = onPrimaryCol,
             primaryContainer = hsl(primaryHue, cP, if (amoled) 24 else 30),
             onPrimaryContainer = hsl(primaryHue, (cP - 5).coerceAtLeast(0), 90),
 
@@ -148,16 +186,16 @@ object Md3SchemeBuilder {
             onError = hsl(0, 45, 16),
 
             background = backgroundCol,
-            onBackground = hsl(neutralHue, cNV, 90),
+            onBackground = hsl(neutralHue, cNV, onSurfaceL),
             surface = surfaceCol,
-            onSurface = hsl(neutralHue, cNV, 90),
+            onSurface = hsl(neutralHue, cNV, onSurfaceL),
             surfaceContainer = hsl(neutralHue, cN, sc1L),
             surfaceContainerHigh = hsl(neutralHue, cN, sc2L),
             surfaceContainerHighest = hsl(neutralHue, cN, sc3L),
             surfaceContainerLow = surfaceLowCol,
             surfaceContainerLowest = surfaceLowestCol,
             surfaceVariant = hsl(neutralHue, cNV, sc2L + 4),
-            onSurfaceVariant = hsl(neutralHue, cNV, 80),
+            onSurfaceVariant = hsl(neutralHue, cNV, onSurfaceVariantL),
 
             outline = hsl(neutralHue, cNV, 60),
             outlineVariant = hsl(neutralHue, cNV, 28),

@@ -1,0 +1,252 @@
+--- a/app/src/main/java/com/spotiaisexs/app/playback/MusicPlayer.kt
++++ b/app/src/main/java/com/spotiaisexs/app/playback/MusicPlayer.kt
+@@ -941,7 +941,7 @@
+             .setBufferDurationsMs(
+                 /* minBufferMs = */ if (handleAudioFocus) 45_000 else 15_000,
+                 /* maxBufferMs = */ if (handleAudioFocus) 120_000 else 30_000,
+-                /* bufferForPlaybackMs = */ 1_500,
++                /* bufferForPlaybackMs = */ 1_000,
+                 /* bufferForPlaybackAfterRebufferMs = */ 2_500,
+             )
+             .setPrioritizeTimeOverSizeThresholds(true)
+@@ -3561,46 +3561,120 @@
+      * or competing indefinitely with current playback.
+      */
+     @MainThread
++    /**
++     * Keeps the next [LOOKAHEAD_DEPTH] songs — in real play order, shuffle and
++     * repeat-all included — resolved ahead of time, so a skip (even several in
++     * a row) lands on a song whose stream URL is already known and, for the
++     * first two, whose opening bytes are already in the cache.
++     *
++     * Before, only +1 and +2 were resolved, only while playing, +2 waited an
++     * extra second, and if +1 happened to be resolved already the walk stopped
++     * right there — so rapid skips quickly hit songs that still had to go
++     * through the whole YouTube resolution chain. Expired URLs (paused for
++     * hours) are now refreshed here too instead of at skip time.
++     */
+     private fun preloadNextQueueItem(currentIndex: Int) {
+-        val nextIndex = if (player.shuffleModeEnabled) player.nextMediaItemIndex else currentIndex + 1
+-        if (nextIndex == C.INDEX_UNSET || nextIndex !in 0 until player.mediaItemCount) return
+-        val nextItem = player.getMediaItemAt(nextIndex)
+-        if (nextItem.localConfiguration?.uri?.scheme != "spotiaisexs") return
+-        preloadNextTrack(nextIndex, nextItem.toPlayableTrack())
+-        // Desktop-style +2 neighbor prefetch
+-        val nextNext = nextIndex + 1
+-        if (nextNext in 0 until player.mediaItemCount) {
+-            val nn = player.getMediaItemAt(nextNext)
+-            if (nn.localConfiguration?.uri?.scheme == "spotiaisexs") {
+-                preloadNeighborTrack(nextNext, nn.toPlayableTrack())
++        if (!playerDelegate.isInitialized()) return
++        upcomingQueueIndices(currentIndex, LOOKAHEAD_DEPTH).forEachIndexed { depth, index ->
++            val item = player.getMediaItemAt(index)
++            val track = item.toPlayableTrack()
++            if (track.playbackUrl != null) return@forEachIndexed // local file: nothing to resolve
++            if (!needsStreamResolution(item)) {
++                warmArtwork(track)
++                return@forEachIndexed
+             }
++            if (depth == 0) preloadNextTrack(index, track) else preloadLookaheadTrack(index, track, depth)
+         }
+     }
+ 
+-    private var neighborPreloadJob: Job? = null
++    private fun needsStreamResolution(item: MediaItem): Boolean =
++        item.localConfiguration?.uri?.scheme == "spotiaisexs" ||
++            item.localConfiguration?.customCacheKey?.let(preparedStreams::get)?.isExpired() == true
+ 
+-    /** Prefetch +2 neighbor (fire-and-forget, no byte cache). */
+-    private fun preloadNeighborTrack(index: Int, track: PlayableTrack?) {
+-        if (track == null || track.playbackUrl != null) return
+-        warmArtwork(track)
++    /** The next [count] window indices after [fromIndex], following shuffle and repeat-all. */
++    private fun upcomingQueueIndices(fromIndex: Int, count: Int): List<Int> {
++        val timeline = player.currentTimeline
++        if (timeline.isEmpty || fromIndex !in 0 until timeline.windowCount) return emptyList()
++        val repeat = if (player.repeatMode == Player.REPEAT_MODE_ALL) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
++        val shuffle = player.shuffleModeEnabled
++        val out = mutableListOf<Int>()
++        var cursor = fromIndex
++        while (out.size < count) {
++            cursor = timeline.getNextWindowIndex(cursor, repeat, shuffle)
++            if (cursor == C.INDEX_UNSET || cursor == fromIndex || cursor in out) break
++            out += cursor
++        }
++        return out
++    }
++
++    /** In-flight lookahead resolutions (+2, +3…), keyed by queue key so each song resolves once. */
++    private val lookaheadJobs = ConcurrentHashMap<String, Job>()
++
++    private fun preloadLookaheadTrack(index: Int, track: PlayableTrack, depth: Int) {
+         val key = track.queueKey()
+-        neighborPreloadJob?.cancel()
+-        neighborPreloadJob = applicationScope.launch(Dispatchers.IO) {
+-            delay(NEXT_TRACK_PREFETCH_DELAY_MS * 2) // slightly after +1
+-            if (!_state.value.isPlaying) return@launch
+-            val resolved = runCatching {
+-                resolveTrackAudioStreamWithRetry(track, track.videoId, allowLossless = true)
+-            }.getOrNull() ?: return@launch
+-            withContext(Dispatchers.Main.immediate) {
+-                val q = (if (index in 0 until player.mediaItemCount) player.getMediaItemAt(index).toPlayableTrack() else null)
+-                    ?: return@withContext
+-                if (q.queueKey() != key || index == player.currentMediaItemIndex) return@withContext
+-                registerPreparedStream(resolved)
+-                replaceMediaItemPreservingShuffle(index, q.toMediaItem(resolved))
++        if (lookaheadJobs[key]?.isActive == true) return
++        warmArtwork(track)
++        lookaheadJobs[key] = applicationScope.launch(Dispatchers.IO) {
++            try {
++                delay(LOOKAHEAD_STAGGER_MS * depth)
++                val resolved = runCatching {
++                    resolveTrackAudioStreamWithRetry(track, track.videoId, allowLossless = true)
++                }.onFailure { logResolutionFailure(track, "lookahead-preload", 0, it) }
++                    .getOrNull() ?: return@launch
++
++                val installed = withContext(Dispatchers.Main.immediate) {
++                    // The queue may have shifted while resolving: find the song again by key.
++                    val target = index.takeIf {
++                        it in 0 until player.mediaItemCount && player.getMediaItemAt(it).toPlayableTrack().queueKey() == key
++                    } ?: (0 until player.mediaItemCount).firstOrNull {
++                        player.getMediaItemAt(it).toPlayableTrack().queueKey() == key
++                    } ?: return@withContext false
++                    if (target == player.currentMediaItemIndex) return@withContext false
++                    val item = player.getMediaItemAt(target)
++                    if (!needsStreamResolution(item)) return@withContext false
++                    val queuedTrack = item.toPlayableTrack()
++                    val resolvedVideoId = resolved.youtubeCandidate?.videoId
++                    if (resolvedVideoId != null && queuedTrack.videoId != null && resolvedVideoId != queuedTrack.videoId) {
++                        return@withContext false
++                    }
++                    registerPreparedStream(resolved)
++                    replaceMediaItemPreservingShuffle(target, queuedTrack.toMediaItem(resolved))
++                    logStreamEvent("lookahead-prepared", resolved, retry = 0)
++                    true
++                }
++                if (installed && depth == 1) {
++                    prefetchOpeningBytes(resolved, LOOKAHEAD_PREFETCH_BYTES, track, "lookahead-cache")
++                }
++            } finally {
++                currentCoroutineContext()[Job]?.let { lookaheadJobs.remove(key, it) }
+             }
+         }
+     }
+ 
++    /** Caches the first [bytes] of [resolved] so ExoPlayer can start it from disk. */
++    private suspend fun prefetchOpeningBytes(resolved: ResolvedStream, bytes: Long, track: PlayableTrack, stage: String) {
++        val uri = Uri.parse(resolved.url)
++        if (uri.scheme !in setOf("http", "https")) return
++        val dataSpec = DataSpec.Builder()
++            .setUri(uri)
++            .setPosition(0)
++            .setLength(bytes)
++            .setKey(resolved.cacheKey)
++            .build()
++            .withRequestHeaders(resolved.requestHeaders)
++        runCatching {
++            val cacheWriter = CacheWriter(cacheDataSourceFactory.createDataSource(), dataSpec, null, null)
++            val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
++                if (cause is CancellationException) cacheWriter.cancel()
++            }
++            try {
++                cacheWriter.cache()
++            } finally {
++                cancellationHandle?.dispose()
++            }
++        }.onFailure { if (it !is CancellationException) logResolutionFailure(track, stage, 0, it) }
++    }
++
+     private fun preloadNextTrack(nextIndex: Int, nextTrack: PlayableTrack?) {
+         if (nextTrack == null) return
+         if (nextTrack.playbackUrl != null) return
+@@ -3608,8 +3682,9 @@
+         val expectedQueueKey = nextTrack.queueKey()
+         preloadJob?.cancel()
+         preloadJob = applicationScope.launch(Dispatchers.IO) {
++            // Runs while paused too: resolving a URL is one request, and it makes the
++            // next skip instant. Expired URLs are re-resolved by preloadNextQueueItem.
+             delay(NEXT_TRACK_PREFETCH_DELAY_MS)
+-            if (!_state.value.isPlaying) return@launch
+             // WithRetry acquires the resolution wake lock so a locked screen
+             // can't stall the next-track resolve, and retries once on
+             // transient IO (4.0.0 behavior). Still lossless-first.
+@@ -3625,6 +3700,7 @@
+                 if (queuedTrack.queueKey() != expectedQueueKey || nextIndex == player.currentMediaItemIndex) {
+                     return@withContext false
+                 }
++                if (!needsStreamResolution(player.getMediaItemAt(nextIndex))) return@withContext false
+                 val resolvedVideoId = resolved.youtubeCandidate?.videoId
+                 if (resolvedVideoId != null && queuedTrack.videoId != null &&
+                     resolvedVideoId != queuedTrack.videoId
+@@ -3637,31 +3713,7 @@
+                 true
+             }
+             if (!installed) return@launch
+-
+-            val dataSpec = DataSpec.Builder()
+-                .setUri(Uri.parse(resolved.url))
+-                .setPosition(0)
+-                .setLength(NEXT_TRACK_PREFETCH_BYTES)
+-                .setKey(resolved.cacheKey)
+-                .build()
+-                .withRequestHeaders(resolved.requestHeaders)
+-
+-            runCatching {
+-                val cacheWriter = CacheWriter(
+-                    cacheDataSourceFactory.createDataSource(),
+-                    dataSpec,
+-                    null,
+-                    null,
+-                )
+-                val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+-                    if (cause is CancellationException) cacheWriter.cancel()
+-                }
+-                try {
+-                    cacheWriter.cache()
+-                } finally {
+-                    cancellationHandle?.dispose()
+-                }
+-            }.onFailure { logResolutionFailure(nextTrack, "next-cache", 0, it) }
++            prefetchOpeningBytes(resolved, NEXT_TRACK_PREFETCH_BYTES, nextTrack, "next-cache")
+         }
+     }
+ 
+@@ -4179,10 +4231,7 @@
+                             android.util.Log.i("MusicPlayer", "Queue expired/started: auto-resuming endless playback at index $nextToPlay")
+                             resolveAndPlayQueueItem(nextToPlay)
+                         } else {
+-                            val nextIndex = player.currentMediaItemIndex + 1
+-                            if (nextIndex in 0 until player.mediaItemCount) {
+-                                preloadNextTrack(nextIndex, player.getMediaItemAt(nextIndex).toPlayableTrack())
+-                            }
++                            preloadNextQueueItem(player.currentMediaItemIndex)
+                         }
+                     }
+                 }
+@@ -4261,10 +4310,7 @@
+                             android.util.Log.i("MusicPlayer", "End of queue reached: auto-resuming infinite playback at index $nextToPlay")
+                             resolveAndPlayQueueItem(nextToPlay)
+                         } else {
+-                            val nextIndex = player.currentMediaItemIndex + 1
+-                            if (nextIndex in 0 until player.mediaItemCount) {
+-                                preloadNextTrack(nextIndex, player.getMediaItemAt(nextIndex).toPlayableTrack())
+-                            }
++                            preloadNextQueueItem(player.currentMediaItemIndex)
+                         }
+                     }
+                 }
+@@ -6289,7 +6335,13 @@
+         const val PLAYBACK_RETRY_JITTER_MS = 250L
+         const val MEDIA_STREAM_CACHE_BYTES = 64L * 1024 * 1024
+         const val NEXT_TRACK_PREFETCH_BYTES = 1L * 1024 * 1024
+-        const val NEXT_TRACK_PREFETCH_DELAY_MS = 500L
++        const val NEXT_TRACK_PREFETCH_DELAY_MS = 150L
++        /** Songs kept resolved ahead of the current one (+1 … +LOOKAHEAD_DEPTH). */
++        const val LOOKAHEAD_DEPTH = 4
++        /** Small gap between lookahead resolutions so +1 gets the network first. */
++        const val LOOKAHEAD_STAGGER_MS = 350L
++        /** Opening bytes cached for +2 (+1 caches NEXT_TRACK_PREFETCH_BYTES). */
++        const val LOOKAHEAD_PREFETCH_BYTES = 512L * 1024
+         /** Delayed start keeps current-track caching off the startup path. */
+         const val CURRENT_TRACK_CACHE_START_DELAY_MS = 6_000L
+         /** Bounded windows: progressive ahead-cache, never a full predownload. */

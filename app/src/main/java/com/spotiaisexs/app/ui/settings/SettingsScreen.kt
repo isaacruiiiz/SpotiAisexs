@@ -3642,7 +3642,7 @@ private fun AboutCard(versionName: String) {
                     // painterResource() can only parse plain bitmap/vector
                     // drawables, not that root element, and throws the
                     // instant this composable enters composition. Rebuilding
-                    // the same mark from its two real layers (the lime
+                    // the same mark from its two real layers (the dark
                     // background color + the bars vector, both plain
                     // resources) reproduces it exactly without touching the
                     // adaptive icon resource at all.

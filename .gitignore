@@ -72,3 +72,4 @@ spotiaisexs-addon-service/
 *.zip
 credentials_backup*
 
+*.patch

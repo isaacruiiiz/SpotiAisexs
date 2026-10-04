@@ -283,6 +283,14 @@ fun MainShell(
             )
         }
 
+        // "Escuchando en Navegador": shown while the web player is the active device.
+        com.spotiaisexs.app.ui.connect.ConnectRemoteBar(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .adaptiveContentWidth(maxWidth = 600.dp)
+                .zIndex(9f),
+        )
+
         FloatingNavBar(
             backdrop = navigationBackdrop,
             tabs = tabs,

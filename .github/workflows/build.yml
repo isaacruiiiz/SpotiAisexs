@@ -7,12 +7,14 @@ on:
       - '**.md'
       - 'Screenshot/**'
       - '**.yml'
+      - 'web/**'
   pull_request:
     branches: [ main, master ]
     paths-ignore:
       - '**.md'
       - 'Screenshot/**'
       - '**.yml'
+      - 'web/**'
   workflow_dispatch:
 
 jobs:

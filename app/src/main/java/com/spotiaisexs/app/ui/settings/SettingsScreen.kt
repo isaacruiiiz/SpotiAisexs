@@ -126,6 +126,7 @@ import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.SwitchAccount
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FormatListBulleted
@@ -422,6 +423,7 @@ fun SettingsScreen(
     onOpenYouTubeImport: () -> Unit = {},
     onOpenYouTubeLogin: () -> Unit = {},
     onOpenExternalImport: () -> Unit = {},
+    onOpenWebConnect: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val session by viewModel.session.collectAsStateWithLifecycle()
@@ -1527,7 +1529,7 @@ fun SettingsScreen(
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 SectionLabel(stringResource(R.string.settings_section_imports))
-                                SettingsGroup(rowCount = 3) { index, position ->
+                                SettingsGroup(rowCount = 4) { index, position ->
                                     when (index) {
                                         0 -> SettingsActionCard(
                                             icon = Icons.Filled.QueueMusic,
@@ -1548,6 +1550,16 @@ fun SettingsScreen(
                                             onClick = onOpenExternalImport,
                                             position = position,
                                             isHighlighted = (highlightedSettingId == "library.import_external"),
+                                        )
+                                        2 -> SettingsActionCard(
+                                            icon = Icons.Filled.Devices,
+                                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            title = "Conectar con la web",
+                                            subtitle = "Sincroniza lo que suena con el navegador",
+                                            onClick = onOpenWebConnect,
+                                            position = position,
+                                            isHighlighted = (highlightedSettingId == "library.web_connect"),
                                         )
                                         else -> SettingsActionCard(
                                             icon = Icons.Filled.FileDownload,

@@ -402,6 +402,7 @@ fun SpotiAisexsNavHost(
                     onOpenYouTubeImport = { navController.navigate(Screen.YouTubeImport.route) },
                     onOpenYouTubeLogin = { navController.navigate(Screen.YouTubeLogin.route) },
                     onOpenExternalImport = { navController.navigate(Screen.ExternalPlaylistImport.route) },
+                    onOpenWebConnect = { navController.navigate(Screen.WebConnect.route) },
                 )
             }
         }
@@ -433,6 +434,14 @@ fun SpotiAisexsNavHost(
                     onImportSuccess = {
                         navController.popBackStack()
                     },
+                )
+            }
+        }
+
+        composable(Screen.WebConnect.route) {
+            PredictiveBackScreen(onBack = { navController.popBackStack() }) {
+                com.spotiaisexs.app.ui.connect.WebConnectScreen(
+                    onBack = { navController.popBackStack() },
                 )
             }
         }

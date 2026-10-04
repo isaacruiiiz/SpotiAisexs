@@ -33,6 +33,7 @@ class SpotiAisexsApplication : Application(), ImageLoaderFactory {
     @Inject lateinit var trackDownloadManager: dagger.Lazy<com.spotiaisexs.app.data.download.TrackDownloadManager>
     @Inject lateinit var appLocaleManager: dagger.Lazy<com.spotiaisexs.app.util.AppLocaleManager>
     @Inject lateinit var spotifySyncManager: dagger.Lazy<com.spotiaisexs.app.data.spotify.SpotifySyncManager>
+    @Inject lateinit var connectSync: dagger.Lazy<com.spotiaisexs.app.data.connect.ConnectSync>
 
     override fun attachBaseContext(base: Context) {
         // Pin the selected locale before any component (providers, services,
@@ -102,6 +103,12 @@ class SpotiAisexsApplication : Application(), ImageLoaderFactory {
             delay(OPTIONAL_STARTUP_DELAY_MS)
             runCatching { spotifySyncManager.get().start() }
                 .onFailure { android.util.Log.e("SpotiAisexsStartup", "Spotify sync startup disabled", it) }
+        }
+        // Web player sync (Firebase relay); no-op until linked in Settings.
+        applicationScope.launch {
+            delay(OPTIONAL_STARTUP_DELAY_MS)
+            runCatching { connectSync.get().start() }
+                .onFailure { android.util.Log.e("SpotiAisexsStartup", "Web sync startup disabled", it) }
         }
         // YouTube Music playback-history sync (no-ops until an account is
         // connected AND history sync is enabled in Settings — on by default).

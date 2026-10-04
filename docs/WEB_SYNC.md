@@ -58,19 +58,50 @@ El teléfono solo guarda un token de sesión, nunca la contraseña.
 
 ## Cómo se usa
 
-- **Lo que suena en el teléfono** aparece al momento en la web (canción,
-  posición, cola). Desde la web puedes pausar, saltar, buscar en la barra o
-  elegir otra canción de la cola.
-- **Reproducir en el navegador:** botón de dispositivos → *Este navegador*.
-  La web sigue desde el mismo segundo y el teléfono se pausa.
-- **Volver al teléfono:** en la web, botón de dispositivos → tu teléfono; o en
-  el teléfono, la barra "Escuchando en Navegador" → **Aquí**. También vale con
-  darle a play en el teléfono.
+La web funciona **sola**, sin el teléfono:
+
+- **Biblioteca:** cuando el teléfono está enlazado, sube tus playlists (Me gusta
+  incluida) a Firebase. Quedan guardadas, así que la web las muestra y las
+  reproduce aunque el teléfono esté apagado.
+- **Búsqueda:** busca en tu biblioteca y, si añades la clave de YouTube (abajo),
+  en todo YouTube. Botón **+** de cada canción = añadir a continuación.
+- **Al acabar la cola** sigue con más canciones del mismo artista.
+- Atajos: espacio (play/pausa), Mayús + ← / → (anterior/siguiente) y las teclas
+  multimedia del teclado.
+
+Y sincronizada con el teléfono:
+
+- **Lo que suena en el teléfono** aparece al momento en la web y se controla
+  desde ella (pausa, saltar, barra, elegir de la cola).
+- **Cualquier canción que pongas en la web suena en el navegador** y el
+  teléfono se pausa solo.
+- **Pasar la música al teléfono:** botón de dispositivos → tu teléfono; o en el
+  teléfono, barra "Escuchando en Navegador" → **Aquí**, o darle a play.
+- Si el dispositivo que reproducía se desconecta (pestaña cerrada, teléfono sin
+  red), la web lo detecta y te ofrece **seguir aquí** desde donde se quedó.
 
 En el navegador el audio sale del reproductor oficial de YouTube incrustado,
 que tiene que estar visible mientras suena (lo exigen sus condiciones) y puede
 mostrar anuncios. Algunas canciones no permiten reproducirse incrustadas; en ese
 caso la web salta a la siguiente.
+
+## Búsqueda en YouTube (opcional)
+
+1. Entra en <https://console.cloud.google.com> y elige el **mismo proyecto** que
+   creó Firebase.
+2. **APIs y servicios → Biblioteca →** busca **YouTube Data API v3 → Habilitar**.
+3. **APIs y servicios → Credenciales → Crear credenciales → Clave de API.**
+4. Edita la clave: **Restricciones de aplicación → Sitios web** →
+   `https://isaacruiiiz.github.io/*`; **Restricciones de API →** solo
+   *YouTube Data API v3*. Guarda.
+5. Añade al final de `web/config.js`:
+
+   ```js
+   export const youtubeApiKey = "TU_CLAVE";
+   ```
+
+La cuota gratuita da para unas **100 búsquedas al día**. Buscar dentro de tu
+biblioteca no gasta cuota.
 
 ## Datos que se guardan (users/{tu uid}/…)
 
@@ -79,3 +110,4 @@ caso la web salta a la siguiente.
 | `playback` | Dispositivo activo, canción, posición, estado y próximas 50 canciones |
 | `devices/{id}` | Nombre, tipo y último latido de cada dispositivo conectado |
 | `commands/{id}` | Órdenes pendientes para ese dispositivo (se borran al ejecutarse) |
+| `library/playlists` | Tus playlists del teléfono (solo título, portada y canciones) |

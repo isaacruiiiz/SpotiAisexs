@@ -6,7 +6,9 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.spotiaisexs.app.data.generate.youtubeVideoIdOrNull
 import com.spotiaisexs.app.data.local.readSafely
+import com.spotiaisexs.app.data.playlist.PlaylistRepository
 import com.spotiaisexs.app.data.local.recoverPreferences
 import com.spotiaisexs.app.playback.MusicPlayer
 import com.spotiaisexs.app.playback.MusicPlayerState
@@ -27,6 +29,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -127,6 +130,7 @@ sealed interface ConnectStatus {
 class ConnectSync @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     private val player: MusicPlayer,
+    private val playlistRepository: PlaylistRepository,
     okHttpClient: OkHttpClient,
     private val applicationScope: CoroutineScope,
 ) {
@@ -154,6 +158,10 @@ class ConnectSync @Inject constructor(
     @Volatile private var lastPlayback: ConnectPlayback? = null
     @Volatile private var claimPending = false
     @Volatile private var publishedQueueOffset = 0
+    /** Firebase server clock minus ours, from HTTP Date headers (≈1 s precision). */
+    @Volatile private var serverOffsetMs = 0L
+    @Volatile private var lastLibraryJson: String? = null
+    private fun serverNow(): Long = System.currentTimeMillis() + serverOffsetMs
     private val publishRequests = MutableSharedFlow<MusicPlayerState>(
         extraBufferCapacity = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -257,6 +265,7 @@ class ConnectSync @Inject constructor(
             launch { heartbeatLoop(stored) }
             launch { publishLoop() }
             launch { observePlayer() }
+            launch { libraryLoop() }
             launch {
                 streamLoop("playback") { _, _ -> refreshPlaybackDocument() }
             }
@@ -354,13 +363,23 @@ class ConnectSync @Inject constructor(
         }.getOrNull()
         lastPlayback = playback
         val me = config?.deviceId
-        if (playback?.activeDevice != null && playback.activeDevice != me && !claimPending) {
+        val remoteActive = playback?.activeDevice != null && playback.activeDevice != me && !claimPending
+        if (remoteActive && isDeviceOnline(playback!!.activeDevice!!)) {
             // Another device took over: stop here and become a remote.
             if (player.state.value.isPlaying) player.pause()
             _remotePlayback.value = playback
         } else {
+            // This phone plays, or the device that "owns" playback closed its
+            // tab / went offline: don't show a remote for something that is gone.
             _remotePlayback.value = null
         }
+    }
+
+    /** A device is online if its heartbeat is recent (web tabs also remove themselves on close). */
+    private suspend fun isDeviceOnline(deviceId: String): Boolean {
+        val raw = runCatching { rest("GET", "devices/$deviceId/lastSeen", null) }.getOrNull() ?: return false
+        val lastSeen = raw.trim().toLongOrNull() ?: return false
+        return serverNow() - lastSeen < ONLINE_WINDOW_MS
     }
 
     private suspend fun onCommandEvent(path: String, data: JsonElement?) {
@@ -397,7 +416,7 @@ class ConnectSync @Inject constructor(
         val tracks = remote.queue.ifEmpty { listOfNotNull(remote.track) }.map { it.toPlayable() }
         if (tracks.isEmpty()) return
         val startIndex = remote.queueIndex.coerceIn(0, tracks.lastIndex)
-        val startAt = remote.estimatedPositionMs()
+        val startAt = remote.estimatedPositionMs(serverNow())
         claimPending = true
         _remotePlayback.value = null
         withContext(Dispatchers.Main) {
@@ -412,6 +431,58 @@ class ConnectSync @Inject constructor(
         }?.let { if (startAt > SEEK_DETECT_MS) withContext(Dispatchers.Main) { player.seekTo(startAt) } }
     }
 
+    // ── Library (so the web can play on its own, without the phone) ───────
+
+    /**
+     * Mirrors the phone's playlists (Liked Songs included) to
+     * users/{uid}/library, so the web player can browse and play them even
+     * when the phone is off. Only songs with a YouTube id travel; remote-only
+     * account playlists that were never saved locally are skipped. Writes
+     * happen only when something actually changed.
+     */
+    private suspend fun libraryLoop() {
+        playlistRepository.playlists.debounce(LIBRARY_DEBOUNCE_MS).collect { playlists ->
+            val entries = playlists
+                .filter { it.tracks.isNotEmpty() }
+                .associate { playlist ->
+                    val tracks = playlist.tracks.mapNotNull { t ->
+                        t.youtubeVideoIdOrNull()?.let { id ->
+                            ConnectTrack(title = t.name, artist = t.artist, album = t.album, artworkUrl = t.artworkUrl, videoId = id)
+                        }
+                    }
+                    playlist.id.toString() to LibraryPlaylist(
+                        title = playlist.title,
+                        subtitle = playlist.subtitle,
+                        mode = playlist.mode,
+                        artworkUrl = playlist.remoteArtworkUrl ?: tracks.firstOrNull { it.artworkUrl != null }?.artworkUrl,
+                        pinned = playlist.isPinned,
+                        createdAt = playlist.createdAtMillis,
+                        tracks = tracks,
+                    )
+                }
+                .filterValues { it.tracks.isNotEmpty() }
+            val body = json.encodeToString(LibrarySnapshot.serializer(), LibrarySnapshot(entries))
+            if (body == lastLibraryJson) return@collect
+            runCatching { rest("PUT", "library", body) }
+                .onSuccess { lastLibraryJson = body }
+                .onFailure { Log.w(TAG, "Library upload failed", it) }
+        }
+    }
+
+    @Serializable
+    private data class LibraryPlaylist(
+        val title: String,
+        val subtitle: String,
+        val mode: String,
+        val artworkUrl: String? = null,
+        val pinned: Boolean = false,
+        val createdAt: Long = 0,
+        val tracks: List<ConnectTrack>,
+    )
+
+    @Serializable
+    private data class LibrarySnapshot(val playlists: Map<String, LibraryPlaylist>)
+
     // ── Firebase REST / streaming ──────────────────────────────────────────
 
     private suspend fun rest(method: String, path: String, body: String?): String? = withContext(Dispatchers.IO) {
@@ -420,6 +491,7 @@ class ConnectSync @Inject constructor(
         val requestBody = body?.toRequestBody(jsonType)
         val request = Request.Builder().url(url).method(method, if (method == "GET" || method == "DELETE") null else requestBody).build()
         http.newCall(request).execute().use { response ->
+            response.headers.getDate("Date")?.let { serverOffsetMs = it.time - System.currentTimeMillis() }
             if (response.code == 401) {
                 idTokenExpiresAt = 0 // force a refresh on the next call
                 error("Firebase rechazó la sesión (401)")
@@ -620,5 +692,7 @@ class ConnectSync @Inject constructor(
         const val QUEUE_PUBLISH_LIMIT = 50
         const val COMMAND_MAX_AGE_MS = 30_000L
         const val TAKEOVER_SEEK_TIMEOUT_MS = 20_000L
+        const val ONLINE_WINDOW_MS = 75_000L
+        const val LIBRARY_DEBOUNCE_MS = 5_000L
     }
 }

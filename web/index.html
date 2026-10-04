@@ -12,8 +12,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- Pantalla de acceso -->
-  <section id="login" class="login" hidden>
+  <section id="login" class="center-screen" hidden>
     <form id="login-form" class="login-card">
       <img src="logo.svg" alt="" width="72" height="72" class="login-logo">
       <h1>SpotiAisexs</h1>
@@ -25,8 +24,7 @@
     </form>
   </section>
 
-  <!-- Aviso de configuración pendiente -->
-  <section id="setup" class="login" hidden>
+  <section id="setup" class="center-screen" hidden>
     <div class="login-card">
       <img src="logo.svg" alt="" width="72" height="72" class="login-logo">
       <h1>Falta configurar Firebase</h1>
@@ -34,61 +32,85 @@
     </div>
   </section>
 
-  <!-- Reproductor -->
-  <div id="app" class="app" hidden>
-    <header class="topbar">
+  <div id="app" class="shell" hidden>
+    <!-- Barra lateral: navegación + biblioteca -->
+    <aside class="sidebar">
       <div class="brand"><img src="logo.svg" alt="" width="32" height="32"><span>SpotiAisexs</span></div>
-      <div class="topbar-right">
-        <span id="sync-dot" class="sync-dot" title="Sincronización"></span>
-        <button id="logout" class="btn-ghost">Salir</button>
+      <nav class="nav">
+        <button class="nav-item" data-view="home"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 3.2 3 10.4V20a1 1 0 0 0 1 1h5v-6h6v6h5a1 1 0 0 0 1-1v-9.6z"/></svg><span>Inicio</span></button>
+        <button class="nav-item" data-view="search"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg><span>Buscar</span></button>
+        <button class="nav-item nav-library" data-view="library"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4v16"/><path d="M10 4v16"/><path d="m15 4.5 4.5 15"/></svg><span>Biblioteca</span></button>
+      </nav>
+      <div class="library">
+        <h2>Tu biblioteca</h2>
+        <ul id="library-list" class="library-list"></ul>
       </div>
-    </header>
+      <button id="logout" class="btn-ghost logout">Salir</button>
+    </aside>
 
-    <main class="layout">
-      <section class="now">
-        <div class="cover-wrap">
-          <img id="cover" class="cover" alt="">
-          <div id="cover-empty" class="cover cover-empty">
-            <svg viewBox="0 0 100 100" width="96" height="96" aria-hidden="true"><rect x="21.5" y="37" width="9" height="26" rx="4.5"/><rect x="33.5" y="28" width="9" height="44" rx="4.5"/><rect x="45.5" y="20" width="9" height="60" rx="4.5"/><rect x="57.5" y="30" width="9" height="40" rx="4.5"/><rect x="69.5" y="39" width="9" height="22" rx="4.5"/></svg>
-          </div>
-          <div id="yt-holder" class="cover yt-holder" hidden><div id="yt-player"></div></div>
-        </div>
+    <!-- Contenido principal (vistas) -->
+    <main id="main" class="main">
+      <section id="view-home" class="view"></section>
+      <section id="view-search" class="view" hidden>
+        <form id="search-form" class="search-box" role="search">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+          <input id="search-input" type="search" placeholder="¿Qué quieres escuchar?" autocomplete="off">
+        </form>
+        <div id="search-results"></div>
+      </section>
+      <section id="view-library" class="view" hidden></section>
+      <section id="view-playlist" class="view" hidden></section>
+    </main>
 
-        <div class="meta">
-          <div class="titles">
-            <h1 id="title">Nada sonando</h1>
-            <p id="artist" class="muted">Pon algo en el teléfono o aquí</p>
-          </div>
-        </div>
+    <!-- Panel "Reproduciendo": vídeo de YouTube (visible mientras suena aquí) + cola -->
+    <aside id="nowpanel" class="nowpanel">
+      <div class="np-media">
+        <img id="np-cover" class="np-cover" alt="" hidden>
+        <div id="np-empty" class="np-cover np-empty"><svg viewBox="0 0 100 100" width="80" height="80" aria-hidden="true"><rect x="21.5" y="37" width="9" height="26" rx="4.5"/><rect x="33.5" y="28" width="9" height="44" rx="4.5"/><rect x="45.5" y="20" width="9" height="60" rx="4.5"/><rect x="57.5" y="30" width="9" height="40" rx="4.5"/><rect x="69.5" y="39" width="9" height="22" rx="4.5"/></svg></div>
+        <div id="yt-holder" class="np-cover yt-holder" hidden><div id="yt-player"></div></div>
+      </div>
+      <h2 id="np-title">Nada sonando</h2>
+      <p id="np-artist" class="muted">Busca algo o abre una playlist</p>
+      <h3 class="np-queue-title">A continuación</h3>
+      <ol id="queue-list" class="queue-list"></ol>
+      <p id="queue-empty" class="muted small">La cola aparecerá aquí.</p>
+    </aside>
 
-        <div class="progress">
-          <div id="bar" class="bar" role="slider" aria-label="Posición" tabindex="0"><div id="bar-fill" class="bar-fill"></div><div id="bar-knob" class="bar-knob"></div></div>
-          <div class="times"><span id="t-pos">0:00</span><span id="t-dur">0:00</span></div>
-        </div>
-
+    <!-- Barra de reproducción inferior -->
+    <footer class="playerbar">
+      <div class="pb-track">
+        <img id="pb-cover" class="pb-cover" alt="" hidden>
+        <div class="pb-cover pb-cover-empty" id="pb-cover-empty"></div>
+        <div class="pb-text"><div id="pb-title" class="pb-title">—</div><div id="pb-artist" class="pb-artist"></div></div>
+      </div>
+      <div class="pb-center">
         <div class="controls">
-          <button id="prev" class="btn-icon" aria-label="Anterior"><svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M19 5.5v13l-9-6.5z"/><rect x="5" y="5" width="3" height="14" rx="1"/></svg></button>
-          <button id="play" class="btn-play" aria-label="Reproducir"><svg id="ic-play" viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg><svg id="ic-pause" viewBox="0 0 24 24" width="30" height="30" fill="currentColor" hidden><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg></button>
-          <button id="next" class="btn-icon" aria-label="Siguiente"><svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M5 5.5v13l9-6.5z"/><rect x="16" y="5" width="3" height="14" rx="1"/></svg></button>
+          <button id="shuffle" class="btn-icon sm" aria-label="Aleatorio" aria-pressed="false"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h4v4"/><path d="M4 20 20 4"/><path d="M20 16v4h-4"/><path d="m15 15 5 5"/><path d="M4 4l5 5"/></svg></button>
+          <button id="prev" class="btn-icon" aria-label="Anterior"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M19 5.5v13l-9-6.5z"/><rect x="5" y="5" width="3" height="14" rx="1"/></svg></button>
+          <button id="play" class="btn-play" aria-label="Reproducir"><svg id="ic-play" viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg><svg id="ic-pause" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" hidden><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg></button>
+          <button id="next" class="btn-icon" aria-label="Siguiente"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M5 5.5v13l9-6.5z"/><rect x="16" y="5" width="3" height="14" rx="1"/></svg></button>
+          <button id="queue-toggle" class="btn-icon sm" aria-label="Cola"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h12"/><path d="M4 12h12"/><path d="M4 18h8"/><path d="m17 15 4 3-4 3z" fill="currentColor"/></svg></button>
         </div>
-
+        <div class="progress">
+          <span id="t-pos" class="time">0:00</span>
+          <div id="bar" class="bar" role="slider" aria-label="Posición" tabindex="0"><div id="bar-fill" class="bar-fill"></div><div id="bar-knob" class="bar-knob"></div></div>
+          <span id="t-dur" class="time">0:00</span>
+        </div>
+      </div>
+      <div class="pb-right">
         <div class="devices">
-          <button id="device-btn" class="device-btn">
+          <button id="device-btn" class="device-btn" aria-label="Dispositivos">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/></svg>
-            <span id="device-label">Sin dispositivo activo</span>
+            <span id="device-label">Este navegador</span>
           </button>
           <div id="device-menu" class="device-menu" hidden></div>
         </div>
-      </section>
-
-      <aside class="queue">
-        <h2>A continuación</h2>
-        <ol id="queue-list" class="queue-list"></ol>
-        <p id="queue-empty" class="muted">La cola aparecerá aquí.</p>
-      </aside>
-    </main>
+        <input id="volume" class="volume" type="range" min="0" max="100" value="80" aria-label="Volumen">
+      </div>
+    </footer>
   </div>
 
+  <div id="toast" class="toast" role="status" hidden></div>
   <script type="module" src="app.js"></script>
 </body>
 </html>

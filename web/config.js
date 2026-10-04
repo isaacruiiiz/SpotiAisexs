@@ -9,3 +9,5 @@ export const firebaseConfig = {
   messagingSenderId: "678473182843",
   appId: "1:678473182843:web:425953a666a3c1b14b7cde",
 };
+
+export const youtubeApiKey = "AIzaSyAjR4eqrgt9ZN0eya9tFCDXd9mPH1i3x9A";

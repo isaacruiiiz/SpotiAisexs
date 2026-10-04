@@ -1,11 +1,18 @@
-// Configuración de tu proyecto de Firebase (consola de Firebase → Configuración
-// del proyecto → Tus apps → app web → "Configuración del SDK").
-// Estas claves son públicas por diseño: la seguridad la ponen las reglas de la
-// base de datos (database.rules.json), que solo dejan entrar a tu cuenta.
-export const firebaseConfig = {
-  apiKey: "PEGA_AQUI_TU_API_KEY",
-  authDomain: "tu-proyecto.firebaseapp.com",
-  databaseURL: "https://tu-proyecto-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "tu-proyecto",
-  appId: "PEGA_AQUI_TU_APP_ID",
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyA_vLjn9SKLbwsmDn-hVKl9iI3xp0-bf7Q",
+  authDomain: "spotiaisexs.firebaseapp.com",
+  databaseURL: "https://spotiaisexs-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "spotiaisexs",
+  storageBucket: "spotiaisexs.firebasestorage.app",
+  messagingSenderId: "678473182843",
+  appId: "1:678473182843:web:425953a666a3c1b14b7cde"
 };
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);

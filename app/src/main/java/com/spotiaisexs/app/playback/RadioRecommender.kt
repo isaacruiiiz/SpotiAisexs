@@ -8,6 +8,17 @@ import kotlin.random.Random
  * mashups…) already ran. [sources] holds every seed that surfaced it; [bestRank]
  * is its best position inside any of those related lists (0 = first).
  */
+/**
+ * How far the radio may wander from what the user picked.
+ *
+ * - [FOCUSED]: the user chose a concrete song (search, link, a tap on a track).
+ *   The continuation stays in that song's neighbourhood — same artist, the
+ *   artists YouTube itself places next to it — and taste only breaks ties.
+ * - [EXPLORE]: the user asked for "Infinite Radio" or a mix. Wide variety
+ *   driven by their taste, with a big discovery share.
+ */
+enum class RadioStyle { FOCUSED, EXPLORE }
+
 internal data class RadioCandidate(
     val track: PlayableTrack,
     val sources: Set<String>,
@@ -31,6 +42,7 @@ internal data class RadioSignals(
     val heavyRotationArtists: Set<String> = emptySet(),
     /** Lowercased artists of the queue tail, oldest first — used for spacing and fatigue. */
     val recentQueueArtists: List<String> = emptyList(),
+    val style: RadioStyle = RadioStyle.EXPLORE,
 )
 
 /**
@@ -56,6 +68,8 @@ internal object RadioRecommender {
     const val ARTIST_CAP_PER_BATCH = 2
     const val ARTIST_SPACING = 4
     const val DEFAULT_DISCOVERY_RATIO = 0.3
+    const val FOCUSED_DISCOVERY_RATIO = 0.1
+    const val EXPLORE_DISCOVERY_RATIO = 0.4
     const val TEMPERATURE = 0.7
 
     private const val DAY_MS = 24.0 * 60 * 60 * 1000
@@ -63,12 +77,23 @@ internal object RadioRecommender {
     fun historyKey(title: String, artist: String): String =
         "${title.trim()}|${artist.trim()}".lowercase()
 
+    private val ARTIST_SPLIT = Regex("""\s*(?:,|&|\+|/|\bx\b|\bfeat\.?|\bft\.?|\bwith\b|\by\b)\s*""")
+
+    /** "Beny Jr & Morad feat. X" → {"beny jr", "morad", "x"} — for neighbourhood checks. */
+    fun artistTokens(artist: String): Set<String> =
+        artist.lowercase().split(ARTIST_SPLIT).map(String::trim).filter { it.length > 1 }.toSet()
+
+    fun discoveryRatioFor(style: RadioStyle): Double = when (style) {
+        RadioStyle.FOCUSED -> FOCUSED_DISCOVERY_RATIO
+        RadioStyle.EXPLORE -> EXPLORE_DISCOVERY_RATIO
+    }
+
     fun select(
         candidates: List<RadioCandidate>,
         signals: RadioSignals,
         batchSize: Int,
         random: Random = Random.Default,
-        discoveryRatio: Double = DEFAULT_DISCOVERY_RATIO,
+        discoveryRatio: Double = discoveryRatioFor(signals.style),
     ): List<PlayableTrack> {
         if (candidates.isEmpty() || batchSize <= 0) return emptyList()
 
@@ -109,11 +134,14 @@ internal object RadioRecommender {
             2 -> 1.7
             else -> 2.2
         }
-        score += 1.0 / (1.0 + candidate.bestRank / 8.0)
+        val focused = signals.style == RadioStyle.FOCUSED
+        // Focused radios trust YouTube's order much more: the top of a song's
+        // related list is its real neighbourhood, the tail is where it drifts.
+        score += if (focused) 2.0 / (1.0 + candidate.bestRank / 6.0) else 1.0 / (1.0 + candidate.bestRank / 8.0)
 
-        // Taste.
-        if (artist in signals.spotifyArtists) score += 0.6
-        if (artist in signals.heavyRotationArtists) score += 0.2
+        // Taste: drives an exploring radio, only breaks ties in a focused one.
+        if (artist in signals.spotifyArtists) score += if (focused) 0.2 else 0.6
+        if (artist in signals.heavyRotationArtists) score += if (focused) 0.1 else 0.2
 
         // Freshness and skips.
         val history = signals.history[historyKey(candidate.track.title, candidate.track.artist)]

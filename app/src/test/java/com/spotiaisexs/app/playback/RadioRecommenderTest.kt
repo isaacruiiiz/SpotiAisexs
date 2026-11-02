@@ -66,4 +66,19 @@ class RadioRecommenderTest {
         val picked = RadioRecommender.select(small, RadioSignals(now, history), 20, Random(3))
         assertThat(picked).hasSize(6)
     }
+
+    @Test
+    fun focusedRadioTrustsRankOverTaste() {
+        val now = 1_000_000_000_000L
+        val near = RadioCandidate(PlayableTrack(title = "Cerca", artist = "Morad"), setOf("seed:a"), bestRank = 0)
+        val far = RadioCandidate(PlayableTrack(title = "Lejos", artist = "Olivia Rodrigo"), setOf("seed:a"), bestRank = 30)
+        val signals = RadioSignals(now, emptyMap(), spotifyArtists = setOf("olivia rodrigo"), style = RadioStyle.FOCUSED)
+        assertThat(RadioRecommender.score(near, signals)).isGreaterThan(RadioRecommender.score(far, signals) + 1.0)
+    }
+
+    @Test
+    fun artistTokensSplitCollaborations() {
+        assertThat(RadioRecommender.artistTokens("Beny Jr & Morad")).containsExactly("beny jr", "morad")
+        assertThat(RadioRecommender.artistTokens("JC Reyes feat. De La Ghetto")).containsExactly("jc reyes", "de la ghetto")
+    }
 }

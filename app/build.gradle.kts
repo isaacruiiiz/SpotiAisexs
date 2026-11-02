@@ -213,6 +213,8 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
+    // QR de la Jam (solo genera el código; sin cámara ni servicios de Google)
+    implementation("com.google.zxing:core:3.5.3")
     implementation(libs.androidx.navigation.compose)
     debugImplementation(libs.androidx.ui.tooling)
 

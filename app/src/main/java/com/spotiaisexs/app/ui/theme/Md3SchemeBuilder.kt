@@ -24,6 +24,7 @@ object Md3SchemeBuilder {
     private const val CHROMA_TERTIARY = 22
     private const val CHROMA_NEUTRAL = 5
     private const val CHROMA_NEUTRAL_VARIANT = 8
+    private const val CHROMA_TINT_AMOLED = 14
 
     /** Extracts just the hue (0-360) from a hex color — the only component
      *  app.js's _hexToHsl() result that _applyMaterialYouScheme() actually uses. */
@@ -66,10 +67,9 @@ object Md3SchemeBuilder {
     }
 
     /**
-     * Redesign: the accent is used as-is, vivid and functional (Spotify's
-     * single-accent rule), instead of a pastel tone of its hue. Seeds that
-     * would vanish on black (dark artwork colors) or blind (near-white) are
-     * pulled into a readable lightness band; greys stay grey.
+     * Design "Cristal, color de portada": the accent is a light, saturated
+     * tone of the artwork's hue (like #F6B6A0 for a peach cover) that reads
+     * on pure black and on glass, with dark ink on top of it. Greys stay grey.
      */
     internal fun vividAccent(hex: String): Color? {
         val clean = hex.removePrefix("#")
@@ -84,8 +84,8 @@ object Md3SchemeBuilder {
         val d = max - min
         val sat = if (d == 0f) 0f else d / (1f - abs(2f * l - 1f))
         if (sat < 0.08f) return null // grey seed: keep the tonal scheme
-        val satPct = (sat.coerceAtLeast(0.5f) * 100f).roundToInt().coerceAtMost(100)
-        val lightPct = (l.coerceIn(0.55f, 0.72f) * 100f).roundToInt()
+        val satPct = (sat.coerceIn(0.5f, 0.9f) * 100f).roundToInt()
+        val lightPct = (l.coerceIn(0.76f, 0.84f) * 100f).roundToInt()
         return hsl(hueOf(hex), satPct, lightPct)
     }
 
@@ -140,9 +140,10 @@ object Md3SchemeBuilder {
         val cP = if (monochrome) 0 else CHROMA_PRIMARY
         val cS = if (monochrome) 0 else CHROMA_SECONDARY
         val cT = if (monochrome) 0 else CHROMA_TERTIARY
-        // Redesign: on pure black the surfaces are neutral greys, never tinted
-        // by the accent — color comes from artwork and the accent only.
-        val cN = if (monochrome || amoled) 0 else CHROMA_NEUTRAL
+        // Background stays pure black; the raised surfaces (cards, sheets,
+        // glass chrome) take a faint tint of the artwork hue, like the
+        // tinted glass of the design.
+        val cN = if (monochrome) 0 else if (amoled) CHROMA_TINT_AMOLED else CHROMA_NEUTRAL
         val cNV = if (monochrome || amoled) 0 else CHROMA_NEUTRAL_VARIANT
 
         // Elevation ladder on black: ~#121212 / #1C1C1C / #292929 (lighter = higher).
@@ -154,7 +155,8 @@ object Md3SchemeBuilder {
         val onSurfaceVariantL = if (amoled) 70 else 80
         val primaryCol = primaryOverride ?: hsl(primaryHue, cP, 82)
         val onPrimaryCol = if (primaryOverride != null) {
-            if (primaryOverride.luminance() > 0.35f) Color(0xFF1A0E08) else Color.White
+            // Dark ink of the same hue on the light accent.
+            if (primaryOverride.luminance() > 0.35f) hsl(primaryHue, 70, 12) else Color.White
         } else {
             hsl(primaryHue, cP, 16)
         }

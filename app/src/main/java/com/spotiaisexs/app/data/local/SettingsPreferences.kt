@@ -80,7 +80,7 @@ data class MiscSettings(
      *  updating live as that track changes. Falls back to the user's
      *  regular selected accent whenever nothing is playing or artwork
      *  colors can't be extracted — see ThemeRepository.updateNowPlayingArtwork. */
-    val dynamicNowPlayingEnabled: Boolean = false,
+    val dynamicNowPlayingEnabled: Boolean = true,
     /** "Use Application Font" — on: the bundled Google Sans Flex variable
      *  font (see ui/theme/Type.kt); off: the device's own system font.
      *  Defaults on so the app ships with its own identity out of the box. */
@@ -283,7 +283,7 @@ class SettingsPreferences @Inject constructor(
         .recoverPreferences("SettingsPreferences")
         .map { p ->
             MiscSettings(
-                dynamicNowPlayingEnabled = p.readSafely(Keys.DYNAMIC_NOW_PLAYING) ?: false,
+                dynamicNowPlayingEnabled = p.readSafely(Keys.DYNAMIC_NOW_PLAYING) ?: true,
                 useCustomFont = p.readSafely(Keys.USE_CUSTOM_FONT) ?: true,
                 pinnedFriends = p.readSafely(Keys.PINNED_FRIENDS) ?: emptySet(),
                 preferLosslessStreaming = p.readSafely(Keys.PREFER_LOSSLESS_STREAMING) ?: true,

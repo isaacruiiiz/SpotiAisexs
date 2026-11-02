@@ -304,6 +304,9 @@ class MusicPlayer @Inject constructor(
     private var radioQueueLoadJob: Job? = null
     private var radioQueueActive = false
     private val radioUsedSeeds = ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var radioStyle = RadioStyle.FOCUSED
+    /** Artist tokens around the song the user picked; a focused radio never leaves them for long. */
+    private val radioNeighbourhood = ConcurrentHashMap.newKeySet<String>()
     /** Everything this radio session already suggested — never suggested twice, even if removed from the queue. */
     private val radioSuggestedKeys = ConcurrentHashMap.newKeySet<String>()
     private var unavailableSkipJob: Job? = null
@@ -903,7 +906,7 @@ class MusicPlayer @Inject constructor(
                 } else {
                     runCatching {
                         runBlocking(Dispatchers.IO) {
-                            resolveTrackAudioStreamWithRetry(track, track.videoId, allowLossless = !bypassLossless).also { resolved ->
+                            resolveTrackAudioStreamWithRetry(track, track.videoId, allowLossless = !bypassLossless, urgent = true).also { resolved ->
                                 logStreamEvent("loader-prepared", resolved, retry = 0)
                                 android.util.Log.i("MusicPlayer", "[MEDIA3] loader resolved '${track.title}' key=${resolved.cacheKey} codec=${resolved.audioCodec}")
                                 applicationScope.launch(Dispatchers.Main.immediate) {
@@ -1269,7 +1272,7 @@ class MusicPlayer @Inject constructor(
 
     init {
         setupSpatializerListener()
-        runCatching { restorePlaybackSession() }.getOrElse { error ->
+        val restored = runCatching { restorePlaybackSession() }.getOrElse { error ->
             // A corrupt session or OEM media-stack failure must not become a
             // permanent launch-crash loop. Discard only the resumable session.
             android.util.Log.e("MusicPlayer", "Playback restore disabled", error)
@@ -1277,6 +1280,7 @@ class MusicPlayer @Inject constructor(
             clearPersistedPlaybackSession()
             false
         }
+        if (restored) warmRestoredSessionStream()
         ticker = applicationScope.launch(Dispatchers.Main.immediate) {
             var lastTickerPersistMs = 0L
             while (true) {
@@ -1584,6 +1588,7 @@ class MusicPlayer @Inject constructor(
         track: PlayableTrack,
         sourceLabel: String = "SpotiAisexs",
         startRadio: Boolean = true,
+        radioStyle: RadioStyle = RadioStyle.FOCUSED,
     ) {
         pendingRestoredSession = null
         disableDiscoverQueue()
@@ -1595,6 +1600,7 @@ class MusicPlayer @Inject constructor(
         latePreloadKey = null
         lastPreloadRetryMs = 0L
         radioQueueActive = startRadio
+        this.radioStyle = radioStyle
         startResolvedQueuePlayback(
             tracks = listOf(track),
             selectedIndex = 0,
@@ -1604,7 +1610,10 @@ class MusicPlayer @Inject constructor(
         )
         if (startRadio) {
             _state.update { it.copy(isEndlessQueue = true) }
-            startRadioQueue(track)
+            // The radio fans out to several YouTube requests; starting it at the
+            // same instant as the first song's stream made them compete for the
+            // same connections. Let the song resolve first (bounded wait).
+            startRadioQueue(track, waitFor = playRequest)
         }
     }
 
@@ -1718,11 +1727,14 @@ class MusicPlayer @Inject constructor(
         playRequest = applicationScope.launch(Dispatchers.IO) {
             try {
                 val resolved = if (selectedTrack.playbackUrl == null) {
-                    resolveTrackAudioStreamWithRetry(
-                        track = selectedTrack,
-                        videoId = selectedTrack.videoId,
-                        allowLossless = selectedTrack.mediaIdKey() !in losslessBypassMediaIds,
-                    )
+                    val allowLossless = selectedTrack.mediaIdKey() !in losslessBypassMediaIds
+                    preparedStartStream(selectedTrack, allowLossless)
+                        ?: resolveTrackAudioStreamWithRetry(
+                            track = selectedTrack,
+                            videoId = selectedTrack.videoId,
+                            allowLossless = allowLossless,
+                            urgent = true,
+                        )
                 } else {
                     null
                 }
@@ -1878,14 +1890,18 @@ class MusicPlayer @Inject constructor(
         }
     }
 
-    fun playNext(track: PlayableTrack) {
+    /**
+     * Inserts [track] right after the current song, or [upcomingOffset] songs
+     * later (the Jam uses it so guests' songs keep the order they were added).
+     */
+    fun playNext(track: PlayableTrack, upcomingOffset: Int = 0) {
         applicationScope.launch {
             val enriched = runCatching { matchMetadata(track) }.getOrDefault(track)
             withContext(Dispatchers.Main.immediate) {
                 if (isCasting) {
                     _state.update { snapshot ->
                         val queue = snapshot.queue.toMutableList()
-                        queue.add((snapshot.currentIndex + 1).coerceIn(0, queue.size), enriched)
+                        queue.add((snapshot.currentIndex + 1 + upcomingOffset).coerceIn(0, queue.size), enriched)
                         snapshot.copy(queue = queue)
                     }
                     persistPlaybackSession()
@@ -1894,7 +1910,7 @@ class MusicPlayer @Inject constructor(
                 val wasEnded = player.playbackState == Player.STATE_ENDED
                 val wasEmpty = player.mediaItemCount == 0
                 val currentIndex = player.currentMediaItemIndex
-                val index = (currentIndex + 1).coerceIn(0, player.mediaItemCount)
+                val index = (currentIndex + 1 + upcomingOffset.coerceAtLeast(0)).coerceIn(0, player.mediaItemCount)
                 player.addMediaItem(index, enriched.toMediaItem())
                 // Under shuffle the insert lands at a random permutation spot;
                 // pin it directly after the current track so it truly plays next.
@@ -3163,6 +3179,7 @@ class MusicPlayer @Inject constructor(
                     track = track,
                     videoId = track.videoId,
                     allowLossless = expectedMediaId !in losslessBypassMediaIds,
+                    urgent = true,
                 )
                 currentCoroutineContext().ensureActive()
                 withContext(Dispatchers.Main.immediate) {
@@ -3858,6 +3875,7 @@ class MusicPlayer @Inject constructor(
         radioQueueLoadJob = null
         radioUsedSeeds.clear()
         radioSuggestedKeys.clear()
+        radioNeighbourhood.clear()
     }
 
     private fun isDisallowedRadioTitle(titleLower: String): Boolean {
@@ -3975,7 +3993,9 @@ class MusicPlayer @Inject constructor(
         knownCoreTitles: Set<String>,
         batchSize: Int = RADIO_QUEUE_BATCH_SIZE,
         queueTailArtists: List<String> = emptyList(),
+        style: RadioStyle = radioStyle,
     ): List<PlayableTrack> = coroutineScope {
+        val focused = style == RadioStyle.FOCUSED
         val candidateById = LinkedHashMap<String, YouTubeMusicTrack>()
         val sourcesById = mutableMapOf<String, MutableSet<String>>()
         val bestRankById = mutableMapOf<String, Int>()
@@ -4009,21 +4029,41 @@ class MusicPlayer @Inject constructor(
                     .firstOrNull()?.videoId
             }.getOrNull()
 
+        fun inNeighbourhood(artist: String): Boolean =
+            RadioRecommender.artistTokens(artist).any { it in radioNeighbourhood }
+
+        // Focused: only queue songs from the picked song's neighbourhood seed the
+        // radio further, and just one of them; exploring keeps the wide fan-out.
         val extraSeedIds = fallbackSeeds
+            .let { seeds -> if (focused && radioNeighbourhood.isNotEmpty()) seeds.filter { inNeighbourhood(it.artist) } else seeds }
             .shuffled()
             .distinctBy { it.artist.trim().lowercase() }
             .take(3)
             .mapNotNull { resolveVideoId(it) }
             .filter { it != primarySeedVideoId && it !in radioUsedSeeds }
-            .take(2)
+            .take(if (focused) 1 else 2)
 
+        // The tail of a related list is where YouTube drifts; a focused radio stops earlier.
+        val primaryLimit = if (focused) FOCUSED_RELATED_LIMIT else batchSize
         val seedJobs = buildList {
-            primarySeedVideoId?.let { id -> add("seed:$id" to async { related(id, batchSize) }) }
-            extraSeedIds.forEach { id -> add("seed:$id" to async { related(id, 25) }) }
+            primarySeedVideoId?.let { id -> add("seed:$id" to async { related(id, primaryLimit) }) }
+            extraSeedIds.forEach { id -> add("seed:$id" to async { related(id, if (focused) 15 else 25) }) }
         }
         primarySeedVideoId?.let(radioUsedSeeds::add)
         radioUsedSeeds.addAll(extraSeedIds)
         seedJobs.forEach { (source, job) -> addCandidates(source, job.await()) }
+
+        // Neighbourhood = the seed's artists + the artists at the top of its related list.
+        // Built from the first (user-picked) song and widened only by in-neighbourhood seeds,
+        // so it can drift slowly but never jump from Beny Jr to Olivia Rodrigo.
+        val primarySource = primarySeedVideoId?.let { "seed:$it" }
+        val primaryTop = candidateById.keys.filter { id ->
+            primarySource != null && primarySource in sourcesById[id].orEmpty() && (bestRankById[id] ?: 99) < NEIGHBOURHOOD_TOP_RANK
+        }
+        if (radioNeighbourhood.isEmpty() || (inNeighbourhood(primarySeed.artist) && radioNeighbourhood.size < NEIGHBOURHOOD_MAX_ARTISTS)) {
+            radioNeighbourhood += RadioRecommender.artistTokens(primarySeed.artist)
+            primaryTop.forEach { id -> candidateById[id]?.let { radioNeighbourhood += RadioRecommender.artistTokens(it.artist) } }
+        }
 
         // 2. Spotify library anchor: songs the user saved on Spotify whose artist is
         //    already in this neighbourhood join the pool directly, and one of them
@@ -4031,10 +4071,15 @@ class MusicPlayer @Inject constructor(
         val spotify = runCatching { spotifySyncManager.get() }.getOrNull()
         val spotifyArtists = runCatching { spotify?.tasteArtists() }.getOrNull().orEmpty()
         if (spotify != null && spotifyArtists.isNotEmpty()) {
-            val nearbyArtists = candidateById.values.mapTo(mutableSetOf()) { it.artist.trim().lowercase() }
-            nearbyArtists += primarySeed.artist.trim().lowercase()
-            val nearbyLibrary = runCatching { spotify.tasteSeeds(limit = 400) }.getOrDefault(emptyList())
-                .filter { it.artist.trim().lowercase() in nearbyArtists }
+            val librarySeeds = runCatching { spotify.tasteSeeds(limit = 400) }.getOrDefault(emptyList())
+            val nearbyLibrary = if (focused) {
+                // Only library songs by artists of this neighbourhood.
+                librarySeeds.filter { inNeighbourhood(it.artist) }
+            } else {
+                val nearbyArtists = candidateById.values.mapTo(mutableSetOf()) { it.artist.trim().lowercase() }
+                nearbyArtists += primarySeed.artist.trim().lowercase()
+                librarySeeds.filter { it.artist.trim().lowercase() in nearbyArtists }
+            }
             val libraryTracks = nearbyLibrary.take(6).mapNotNull { track ->
                 track.youtubeVideoIdOrNull()?.let { id ->
                     YouTubeMusicTrack(
@@ -4051,8 +4096,18 @@ class MusicPlayer @Inject constructor(
                 .firstOrNull { it !in radioUsedSeeds && it != primarySeedVideoId }
                 ?.let { id ->
                     radioUsedSeeds.add(id)
-                    addCandidates("seed:$id", related(id, 20))
+                    addCandidates("seed:$id", related(id, if (focused) 15 else 20))
                 }
+            // Exploring radios also jump to a random corner of the user's taste.
+            if (!focused) {
+                librarySeeds.firstOrNull { track ->
+                    val id = track.youtubeVideoIdOrNull()
+                    id != null && id !in radioUsedSeeds && track.artist.trim().lowercase() != primarySeed.artist.trim().lowercase()
+                }?.youtubeVideoIdOrNull()?.let { id ->
+                    radioUsedSeeds.add(id)
+                    addCandidates("taste:$id", related(id, 15), rankOffset = 3)
+                }
+            }
         }
 
         // 3. Still thin? Artist radio search keeps the flow going.
@@ -4069,7 +4124,7 @@ class MusicPlayer @Inject constructor(
         //    (The old fallback seeded from the *most played* artists of the last 30
         //    days, which is exactly what made the radio repeat itself.)
         val statsRepo = runCatching { songPlayStatsRepository.get() }.getOrNull()
-        if (freshCount() < batchSize / 2 && statsRepo != null) {
+        if (!focused && freshCount() < batchSize / 2 && statsRepo != null) {
             val monthAgo = System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000
             val forgotten = runCatching { statsRepo.mostPlayedSince(365, 80) }.getOrDefault(emptyList())
                 .filter { it.lastPlayedAtMillis < monthAgo && it.skipCount <= it.playCount && !it.videoId.isNullOrBlank() }
@@ -4147,9 +4202,25 @@ class MusicPlayer @Inject constructor(
         }
         if (eligible.isEmpty()) return@coroutineScope emptyList()
 
+        // ── Focused: stay in the neighbourhood ──
+        // Keep a candidate if its artist belongs to the neighbourhood, several seeds agree
+        // on it, or it sits near the top of the picked song's own related list.
+        val pool = if (focused && radioNeighbourhood.isNotEmpty()) {
+            val near = eligible.filter { c ->
+                inNeighbourhood(c.track.artist) ||
+                    c.sources.size >= 2 ||
+                    (primarySource != null && primarySource in c.sources && c.bestRank < NEIGHBOURHOOD_TOP_RANK)
+            }
+            // Better a shorter batch (the queue refills itself) than an off-vibe one.
+            near.ifEmpty { eligible.filter { primarySource != null && primarySource in it.sources }.take(batchSize / 3) }
+        } else {
+            eligible
+        }
+        if (pool.isEmpty()) return@coroutineScope emptyList()
+
         // ── Score, sample, space ──
         val history = runCatching {
-            statsRepo?.statsFor(eligible.map { it.track.title to it.track.artist })
+            statsRepo?.statsFor(pool.map { it.track.title to it.track.artist })
                 ?.mapValues { (_, s) -> RadioTrackHistory(s.playCount, s.skipCount, s.lastPlayedAtMillis) }
         }.getOrNull().orEmpty()
         val heavyRotation = runCatching {
@@ -4157,13 +4228,14 @@ class MusicPlayer @Inject constructor(
         }.getOrNull().orEmpty()
 
         val picked = RadioRecommender.select(
-            candidates = eligible,
+            candidates = pool,
             signals = RadioSignals(
                 nowMillis = System.currentTimeMillis(),
                 history = history,
                 spotifyArtists = spotifyArtists,
                 heavyRotationArtists = heavyRotation,
                 recentQueueArtists = queueTailArtists.map { it.trim().lowercase() },
+                style = style,
             ),
             batchSize = batchSize,
         )
@@ -4171,14 +4243,20 @@ class MusicPlayer @Inject constructor(
         picked
     }
 
-    private fun startRadioQueue(seed: PlayableTrack, resumePlaybackImmediately: Boolean = false) {
+    private fun startRadioQueue(
+        seed: PlayableTrack,
+        resumePlaybackImmediately: Boolean = false,
+        waitFor: Job? = null,
+    ) {
         radioQueueLoadJob?.cancel()
         radioUsedSeeds.clear()
         radioSuggestedKeys.clear()
+        radioNeighbourhood.clear()
         seed.videoId?.takeIf(String::isNotBlank)?.let { radioUsedSeeds.add(it) }
 
         radioQueueLoadJob = applicationScope.launch(Dispatchers.IO) {
             try {
+                if (waitFor != null) withTimeoutOrNull(RADIO_START_DEFER_MAX_MS) { waitFor.join() }
                 val existingTracks = withContext(Dispatchers.Main.immediate) {
                     if (!playerDelegate.isInitialized()) emptyList()
                     else (0 until player.mediaItemCount).map { player.getMediaItemAt(it).toPlayableTrack() }
@@ -4266,9 +4344,15 @@ class MusicPlayer @Inject constructor(
                     cleanCoreTitle(it.title)
                 }
 
-                val nextSeed = currentQueue
-                    .drop(currentIndex.coerceAtLeast(0))
-                    .firstOrNull { it.videoId != null && it.videoId !in radioUsedSeeds }
+                val upcoming = currentQueue.drop(currentIndex.coerceAtLeast(0))
+                val focusedSeed = if (radioStyle == RadioStyle.FOCUSED && radioNeighbourhood.isNotEmpty()) {
+                    upcoming.firstOrNull { track ->
+                        track.videoId != null && track.videoId !in radioUsedSeeds &&
+                            RadioRecommender.artistTokens(track.artist).any { it in radioNeighbourhood }
+                    }
+                } else null
+                val nextSeed = focusedSeed
+                    ?: upcoming.firstOrNull { it.videoId != null && it.videoId !in radioUsedSeeds }
                     ?: currentQueue.getOrNull(currentIndex)
                     ?: currentQueue.lastOrNull { it.videoId != null }
                     ?: return@launch
@@ -4416,6 +4500,7 @@ class MusicPlayer @Inject constructor(
                 val currentTrack = player.currentMediaItem?.toPlayableTrack()
                 if (currentTrack != null && player.repeatMode != Player.REPEAT_MODE_ONE) {
                     radioQueueActive = true
+                    radioStyle = RadioStyle.FOCUSED
                     _state.update { it.copy(isEndlessQueue = true) }
                     startRadioQueue(currentTrack, resumePlaybackImmediately = true)
                     return
@@ -5034,6 +5119,7 @@ class MusicPlayer @Inject constructor(
         allowLossless: Boolean = true,
         excludedLosslessUrls: Set<String> = emptySet(),
         allowLocalDownloads: Boolean = true,
+        urgent: Boolean = false,
     ): ResolvedStream = withContext(Dispatchers.IO) {
         val misc = runCatching { settingsPreferences.settings.first() }.getOrDefault(MiscSettings())
         val key = listOf(track.title, track.artist, track.album, videoId, allowLossless, misc.losslessQuality, misc.dolbyAtmosEnabled, misc.preferLosslessStreaming, misc.preferProviderModules, excludedLosslessUrls, allowLocalDownloads)
@@ -5044,7 +5130,7 @@ class MusicPlayer @Inject constructor(
         }
         val request = resolutionRequests.computeIfAbsent(key) {
             now to applicationScope.async(Dispatchers.IO, start = CoroutineStart.LAZY) {
-                resolveRemoteTrackAudioStream(track, videoId, allowLossless, misc, excludedLosslessUrls, allowLocalDownloads)
+                resolveRemoteTrackAudioStream(track, videoId, allowLossless, misc, excludedLosslessUrls, allowLocalDownloads, urgent)
             }
         }
         try {
@@ -5066,6 +5152,7 @@ class MusicPlayer @Inject constructor(
         misc: MiscSettings,
         excludedLosslessUrls: Set<String>,
         allowLocalDownloads: Boolean = true,
+        urgent: Boolean = false,
     ): ResolvedStream {
         val wantLossless = allowLossless &&
             misc.preferLosslessStreaming &&
@@ -5153,10 +5240,16 @@ class MusicPlayer @Inject constructor(
                 localStream
             } else {
                 val isDolbyPreferred = misc.dolbyAtmosEnabled || misc.losslessQuality == LosslessMusicApi.QUALITY_DOLBY_ATMOS
-                val losslessTimeoutMs = if (isDolbyPreferred) {
-                    if (!videoId.isNullOrBlank()) 10_000L else 12_000L
-                } else {
-                    if (!videoId.isNullOrBlank()) 3_500L else 4_500L
+                // [urgent] = the user is waiting on silence (first song, tap,
+                // skip to an unprepared item): don't hold YouTube back for the
+                // whole lossless budget. The lossless result is still cached by
+                // scheduleQualityUpgrade for the next time this song plays, and
+                // upcoming songs keep getting lossless through the lookahead.
+                val losslessTimeoutMs = when {
+                    urgent && isDolbyPreferred -> URGENT_DOLBY_BUDGET_MS
+                    urgent -> URGENT_LOSSLESS_BUDGET_MS
+                    isDolbyPreferred -> if (!videoId.isNullOrBlank()) 10_000L else 12_000L
+                    else -> if (!videoId.isNullOrBlank()) 3_500L else 4_500L
                 }
                 val losslessBudgetMs = (losslessTimeoutMs - (SystemClock.elapsedRealtime() - forkStart)).coerceAtLeast(0L)
                 val losslessStream: ResolvedStream? = if (losslessDeferred.isCompleted) {
@@ -5653,13 +5746,14 @@ class MusicPlayer @Inject constructor(
         track: PlayableTrack,
         videoId: String?,
         allowLossless: Boolean,
+        urgent: Boolean = false,
     ): ResolvedStream {
         runCatching { streamResolutionWakeLock?.acquire(60_000L) }
         try {
             var lastFailure: Throwable? = null
             repeat(2) { attempt ->
                 try {
-                    return resolveTrackAudioStream(track, videoId, allowLossless)
+                    return resolveTrackAudioStream(track, videoId, allowLossless, urgent = urgent)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (error: Throwable) {
@@ -5752,6 +5846,53 @@ class MusicPlayer @Inject constructor(
             ?: previousMs.takeIf { it > 0L }
             ?: _state.value.durationMs.takeIf { it > 0L }
         return seeded ?: 0L
+    }
+
+    /**
+     * A stream already resolved for [track] (restored-session warm-up,
+     * lookahead, a song heard minutes ago) that is the quality we would pick
+     * anyway: a local download, a lossless stream, or YouTube when lossless
+     * isn't wanted. Lets the first song start with no network round trip.
+     */
+    private suspend fun preparedStartStream(track: PlayableTrack, allowLossless: Boolean): ResolvedStream? {
+        val misc = runCatching { settingsPreferences.settings.first() }.getOrDefault(MiscSettings())
+        val wantLossless = allowLossless && misc.preferLosslessStreaming &&
+            misc.losslessQuality != LosslessMusicApi.QUALITY_YOUTUBE && !losslessMusicApi.isCoolingDown
+        val localKey = "${track.artist.trim().lowercase()}_${track.title.trim().lowercase()}"
+        val losslessPrefix = "lossless:${track.mediaIdKey()}:"
+        val matches = preparedStreams.values.filter { stream ->
+            !stream.isExpired() && (
+                (track.videoId != null && stream.youtubeCandidate?.videoId == track.videoId) ||
+                    ((stream.cacheKey.startsWith("local:") || stream.cacheKey.startsWith("offline:")) &&
+                        stream.cacheKey.substringAfter(':') == localKey) ||
+                    (allowLossless && stream.cacheKey.startsWith(losslessPrefix))
+                )
+        }
+        return matches.firstOrNull { it.cacheKey.startsWith("local:") || it.cacheKey.startsWith("offline:") }
+            ?: matches.firstOrNull { it.isLossless || it.audioCodec == "DOLBY ATMOS" }
+            ?: matches.firstOrNull().takeIf { !wantLossless }
+    }
+
+    /**
+     * Resolves the restored session's current song in the background shortly
+     * after launch, so pressing play on the mini player starts at once.
+     */
+    private fun warmRestoredSessionStream() {
+        val track = _state.value.current ?: return
+        if (track.playbackUrl != null) return
+        applicationScope.launch(Dispatchers.IO) {
+            delay(RESTORE_WARMUP_DELAY_MS)
+            val alreadyPlaying = withContext(Dispatchers.Main.immediate) {
+                playerDelegate.isInitialized() && player.mediaItemCount > 0
+            }
+            if (alreadyPlaying) return@launch
+            val resolved = runCatching {
+                resolveTrackAudioStream(track, track.videoId, allowLossless = true)
+            }.getOrNull() ?: return@launch
+            withContext(Dispatchers.Main.immediate) {
+                if (_state.value.current?.mediaIdKey() == track.mediaIdKey()) registerPreparedStream(resolved)
+            }
+        }
     }
 
     private fun findPreparedStreamFor(
@@ -6047,6 +6188,11 @@ class MusicPlayer @Inject constructor(
         val restoredIndex = session.currentIndex.coerceIn(restoredQueue.indices)
         discoverQueueActive = session.isEndlessQueue && session.sourceLabel == "Discover"
         radioQueueActive = session.isEndlessQueue && session.sourceLabel != "Discover"
+        radioStyle = if (session.sourceLabel == INFINITE_RADIO_LABEL || session.sourceLabel.contains("Mix", ignoreCase = true)) {
+            RadioStyle.EXPLORE
+        } else {
+            RadioStyle.FOCUSED
+        }
         val restoredDuration = session.durationMs.takeIf { it > 0L }
             ?: restoredQueue[restoredIndex].durationMs
             ?: findKnownDuration(restoredQueue[restoredIndex])
@@ -6284,6 +6430,13 @@ class MusicPlayer @Inject constructor(
         const val DISCOVER_QUEUE_BATCH_SIZE = 16
         const val DISCOVER_QUEUE_REFILL_THRESHOLD = 8
         const val RADIO_QUEUE_BATCH_SIZE = 35
+        /** A focused radio reads only this much of a song's related list. */
+        const val FOCUSED_RELATED_LIMIT = 25
+        /** Artists ranked above this in the picked song's related list form its neighbourhood. */
+        const val NEIGHBOURHOOD_TOP_RANK = 15
+        const val INFINITE_RADIO_LABEL = "Infinite Radio"
+        /** Past this size the neighbourhood stops widening, so a long focused radio can't drift away. */
+        const val NEIGHBOURHOOD_MAX_ARTISTS = 45
         const val RADIO_QUEUE_REFILL_THRESHOLD = 14
         const val POSITION_PERSIST_INTERVAL_MS = 5_000L
         const val MAX_PERSISTED_QUEUE_SIZE = 200
@@ -6336,6 +6489,13 @@ class MusicPlayer @Inject constructor(
         const val MEDIA_STREAM_CACHE_BYTES = 64L * 1024 * 1024
         const val NEXT_TRACK_PREFETCH_BYTES = 1L * 1024 * 1024
         const val NEXT_TRACK_PREFETCH_DELAY_MS = 150L
+        /** Lossless wait while the user hears silence (YouTube plays meanwhile if it's ready). */
+        const val URGENT_LOSSLESS_BUDGET_MS = 1_500L
+        const val URGENT_DOLBY_BUDGET_MS = 3_000L
+        /** Max time the radio waits for the first song's stream before fetching. */
+        const val RADIO_START_DEFER_MAX_MS = 4_000L
+        /** Restored-session warm-up starts once the app has settled. */
+        const val RESTORE_WARMUP_DELAY_MS = 1_500L
         /** Songs kept resolved ahead of the current one (+1 … +LOOKAHEAD_DEPTH). */
         const val LOOKAHEAD_DEPTH = 4
         /** Small gap between lookahead resolutions so +1 gets the network first. */

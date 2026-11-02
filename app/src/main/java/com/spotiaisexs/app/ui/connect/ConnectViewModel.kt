@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.spotiaisexs.app.data.connect.ConnectPlayback
 import com.spotiaisexs.app.data.connect.ConnectStatus
 import com.spotiaisexs.app.data.connect.ConnectSync
+import com.spotiaisexs.app.data.connect.JamState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,34 @@ class ConnectViewModel @Inject constructor(
 
     val status: StateFlow<ConnectStatus> = connectSync.status
     val remotePlayback: StateFlow<ConnectPlayback?> = connectSync.remotePlayback
+    val jam: StateFlow<JamState?> = connectSync.jam
+
+    private val _jamBusy = MutableStateFlow(false)
+    val jamBusy: StateFlow<Boolean> = _jamBusy.asStateFlow()
+    private val _jamError = MutableStateFlow<String?>(null)
+    val jamError: StateFlow<String?> = _jamError.asStateFlow()
+
+    fun jamLink(state: JamState?): String? = connectSync.jamLink(state)
+
+    fun startJam(hostName: String) = jamAction { connectSync.startJam(hostName) }
+    fun endJam() = jamAction { connectSync.endJam() }
+
+    private fun jamAction(block: suspend () -> Unit) {
+        if (_jamBusy.value) return
+        viewModelScope.launch {
+            _jamBusy.value = true
+            _jamError.value = null
+            try {
+                block()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _jamError.value = e.message ?: "No se pudo actualizar la Jam"
+            } finally {
+                _jamBusy.value = false
+            }
+        }
+    }
 
     private val _form = MutableStateFlow(WebConnectForm())
     val form: StateFlow<WebConnectForm> = _form.asStateFlow()

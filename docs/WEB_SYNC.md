@@ -63,20 +63,29 @@ La web funciona **sola**, sin el teléfono:
 - **Biblioteca:** cuando el teléfono está enlazado, sube tus playlists (Me gusta
   incluida) a Firebase. Quedan guardadas, así que la web las muestra y las
   reproduce aunque el teléfono esté apagado.
-- **Búsqueda:** busca en tu biblioteca y, si añades la clave de YouTube (abajo),
-  en todo YouTube. Botón **+** de cada canción = añadir a continuación.
-- **Al acabar la cola** sigue con más canciones del mismo artista.
+- **Me gusta y playlists desde la web:** corazón en la barra y en cada canción;
+  menú **⋯** (o clic derecho) → *Añadir a la cola*, *Iniciar radio*,
+  *Añadir a Me gusta*, *Añadir a una playlist* o crear una nueva. Se ven al
+  momento y el teléfono los aplica a su biblioteca cuando se conecta.
+- **Radio como en el teléfono:** al poner una canción suelta (buscada) la cola
+  sigue con canciones de su entorno; **Radio infinita** (en Inicio) mezcla
+  según tus gustos. Usa la "Mix" de YouTube de cada canción y la clave de
+  YouTube (1 unidad de cuota por cada 50 canciones, casi nada). Al acabarse
+  una playlist sigue con radio de su última canción.
 - Atajos: espacio (play/pausa), Mayús + ← / → (anterior/siguiente) y las teclas
   multimedia del teclado.
 
-Y sincronizada con el teléfono:
+Y sincronizada con el teléfono (como Spotify Connect):
 
 - **Lo que suena en el teléfono** aparece al momento en la web y se controla
-  desde ella (pausa, saltar, barra, elegir de la cola).
-- **Cualquier canción que pongas en la web suena en el navegador** y el
-  teléfono se pausa solo.
-- **Pasar la música al teléfono:** botón de dispositivos → tu teléfono; o en el
-  teléfono, barra "Escuchando en Navegador" → **Aquí**, o darle a play.
+  desde ella (pausa, saltar, barra, elegir de la cola, añadir a la cola,
+  iniciar radio).
+- **Si el teléfono está sonando, lo que pongas en la web suena en el
+  teléfono.** Para que suene en el navegador, elige *Este navegador* en el
+  botón de dispositivos.
+- **Pasar la música de un sitio a otro:** botón de dispositivos; o en el
+  teléfono, barra "Escuchando en Navegador" → **Aquí**, o darle a play. Sigue
+  en el segundo exacto.
 - Si el dispositivo que reproducía se desconecta (pestaña cerrada, teléfono sin
   red), la web lo detecta y te ofrece **seguir aquí** desde donde se quedó.
 
@@ -103,6 +112,30 @@ caso la web salta a la siguiente.
 La cuota gratuita da para unas **100 búsquedas al día**. Buscar dentro de tu
 biblioteca no gasta cuota.
 
+## Jam con amigos
+
+Tus amigos añaden canciones a tu cola desde un enlace o un QR: sin instalar
+nada, sin cuenta y aunque usen Spotify. Las canciones que añaden entran después
+de la que suena y en el orden en que las pidieron, como en la Jam de Spotify.
+
+**Activarla (una vez):**
+
+1. Firebase → **Authentication → Método de acceso → Anónimo → Habilitar**
+   (los invitados entran como usuarios anónimos).
+2. Firebase → **Realtime Database → Reglas**: pega el contenido actual de
+   `web/database.rules.json` y pulsa **Publicar**.
+
+**Usarla:**
+
+- En la web: botón **Jam** de la barra inferior → **Empezar Jam**.
+- En el teléfono: **Ajustes → Web y Jam → Empezar Jam**.
+- Enseña el QR o comparte el enlace. Cada amigo pone su nombre y ve la cola:
+  lo que suena y lo que viene, con quién añadió cada canción.
+- Para añadir, buscan la canción y tocan **⋯ → Añadir a la cola**, o la
+  **deslizan hacia la derecha** (como en Spotify). También pueden pegar en el
+  buscador el enlace de una canción de Spotify.
+- **Terminar Jam** cierra el acceso al momento.
+
 ## Datos que se guardan (users/{tu uid}/…)
 
 | Ruta | Contenido |
@@ -111,3 +144,5 @@ biblioteca no gasta cuota.
 | `devices/{id}` | Nombre, tipo y último latido de cada dispositivo conectado |
 | `commands/{id}` | Órdenes pendientes para ese dispositivo (se borran al ejecutarse) |
 | `library/playlists` | Tus playlists del teléfono (solo título, portada y canciones) |
+| `jam` | Jam abierta: código, invitados, peticiones pendientes y quién añadió cada canción |
+| `libraryInbox` | Cambios hechos en la web (Me gusta, playlists) pendientes de aplicar en el teléfono |

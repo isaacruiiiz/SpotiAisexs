@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.spotiaisexs.app.data.feed.FeedMix
+import com.spotiaisexs.app.playback.RadioStyle
 import com.spotiaisexs.app.data.feed.FeedArtist
 import com.spotiaisexs.app.data.feed.FeedData
 import com.spotiaisexs.app.data.feed.FeedQuickTile
@@ -103,11 +104,11 @@ class FeedViewModel @Inject constructor(
     fun playInfiniteRadio() {
         val feed = _uiState.value.feedData
         (feed.quickPicks + feed.ytLikedSongs + feed.freshFinds).randomOrNull()?.let {
-            playTrack(it, "Infinite Radio")
+            playTrack(it, "Infinite Radio", RadioStyle.EXPLORE)
         }
     }
 
-    fun playMix(mix: FeedMix) = playTrack(mix.seed, mix.title)
+    fun playMix(mix: FeedMix) = playTrack(mix.seed, mix.title, RadioStyle.EXPLORE)
 
     private fun fetchFeed(refreshing: Boolean) {
         feedJob?.cancel()
@@ -150,8 +151,12 @@ class FeedViewModel @Inject constructor(
 
     fun dismissError() = _uiState.update { it.copy(error = null) }
 
-    fun playTrack(track: YouTubeMusicTrack, sourceLabel: String = "Feed") {
-        musicPlayer.play(track.toPlayableTrack(), sourceLabel = sourceLabel, startRadio = true)
+    fun playTrack(
+        track: YouTubeMusicTrack,
+        sourceLabel: String = "Feed",
+        radioStyle: RadioStyle = RadioStyle.FOCUSED,
+    ) {
+        musicPlayer.play(track.toPlayableTrack(), sourceLabel = sourceLabel, startRadio = true, radioStyle = radioStyle)
     }
 
     fun shuffleTracksQueue(tracks: List<YouTubeMusicTrack>, sourceLabel: String = "Feed") {

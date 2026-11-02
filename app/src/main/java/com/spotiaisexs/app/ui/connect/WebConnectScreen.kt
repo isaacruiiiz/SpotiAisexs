@@ -68,8 +68,8 @@ fun WebConnectScreen(
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
         ) {
             ExpressiveHeader(
-                title = "Conectar con la web",
-                subtitle = "Controla y escucha desde el navegador",
+                title = "Web y Jam",
+                subtitle = "Escucha en el navegador y con tus amigos",
                 onBack = onBack,
             )
             LazyColumn(
@@ -78,6 +78,15 @@ fun WebConnectScreen(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 item { StatusCard(status, onDisconnect = viewModel::disconnect) }
+
+                if (connected) {
+                    item {
+                        JamCard(
+                            viewModel = viewModel,
+                            defaultHostName = (status as ConnectStatus.Connected).email.substringBefore('@'),
+                        )
+                    }
+                }
 
                 if (!connected) {
                     item {

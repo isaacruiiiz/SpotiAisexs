@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Jam · SpotiAisexs</title>
+  <meta name="description" content="Mira la cola de la Jam y añade canciones.">
+  <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="jam.css">
+</head>
+<body>
+  <!-- Fondo: la portada que suena, difuminada. Su color tiñe el acento de la página. -->
+  <div class="backdrop" aria-hidden="true"><img id="backdrop-img" alt=""></div>
+
+  <main class="jam-app">
+    <header class="jam-head">
+      <div class="head-text">
+        <h1 id="jam-title">Jam</h1>
+        <span id="guest-count" class="muted small"></span>
+      </div>
+    </header>
+
+    <!-- Mensajes de estado: conectando, enlace roto, Jam terminada… -->
+    <section id="status" class="glass status">
+      <p id="status-text">Conectando…</p>
+    </section>
+
+    <!-- Unirse -->
+    <form id="join" class="glass join" hidden>
+      <h2>Únete a la Jam</h2>
+      <p class="muted">Pon tu nombre para que se vea quién ha añadido cada canción.</p>
+      <label>Tu nombre<input id="guest-name" maxlength="30" autocomplete="nickname" required></label>
+      <button class="btn-accent" type="submit">Entrar</button>
+    </form>
+
+    <div id="live" hidden>
+      <form id="search-form" class="search glass" role="search">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+        <input id="search-input" type="search" placeholder="Busca una canción para añadir" autocomplete="off" enterkeyhint="search" aria-label="Buscar canciones">
+        <button id="search-cancel" class="search-cancel" type="button" hidden>Cancelar</button>
+      </form>
+
+      <!-- Resultados de búsqueda (sustituyen a la cola mientras buscas) -->
+      <section id="results-view" hidden>
+        <p class="hint muted small">Toca ⋯ o desliza una canción hacia la derecha para añadirla a la cola.</p>
+        <ul id="results" class="tracks"></ul>
+      </section>
+
+      <!-- La cola -->
+      <section id="queue-view">
+        <h2 class="section-title">Sonando</h2>
+        <div id="now" class="now">
+          <div class="now-art"><img id="now-cover" alt="" hidden><div id="now-cover-empty" class="art-empty"></div></div>
+          <div class="now-text">
+            <div id="now-title" class="now-title">Nada sonando todavía</div>
+            <div id="now-artist" class="muted"></div>
+          </div>
+          <div id="now-bars" class="bars" aria-hidden="true" hidden><i></i><i></i><i></i></div>
+        </div>
+
+        <h2 class="section-title">A continuación</h2>
+        <ul id="queue" class="tracks"></ul>
+        <p id="queue-empty" class="muted small empty">La cola está vacía. Busca una canción y añádela.</p>
+      </section>
+    </div>
+  </main>
+
+  <!-- Menú de una canción (⋯) -->
+  <div id="sheet-scrim" class="scrim" hidden></div>
+  <div id="sheet" class="sheet glass" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <img id="sheet-art" alt="">
+      <div class="t-text"><div id="sheet-title" class="t-title"></div><div id="sheet-artist" class="t-sub"></div></div>
+    </div>
+    <button id="sheet-add" class="sheet-item" type="button">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h12"/><path d="M4 12h12"/><path d="M4 18h7"/><path d="M18 14v6"/><path d="M15 17h6"/></svg>
+      Añadir a la cola
+    </button>
+    <button id="sheet-close" class="sheet-item muted" type="button">Cancelar</button>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="jam.js"></script>
+</body>
+</html>

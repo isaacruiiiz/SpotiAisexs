@@ -12,18 +12,16 @@ import androidx.compose.ui.unit.sp
 import com.spotiaisexs.app.R
 
 /**
- * Figtree (SIL OFL 1.1, docs/licenses/Figtree-OFL.txt), bundled as a variable
- * font (res/font/figtree.ttf, wght 300–900). A geometric grotesk in the same
- * family of feel as Spotify's Circular and Apple's SF, both of which are
- * proprietary. Following both design systems, headlines are heavy with tight
- * tracking (large-title style), body text stays regular and neutral, and
- * labels are bold so they read on pills and chips.
+ * Geist (SIL OFL 1.1, docs/licenses/Geist-OFL.txt), bundled as a variable
+ * font (res/font/geist.ttf, wght 100–900). Design "Cristal, color de
+ * portada": large titles are Bold with tight tracking, section titles
+ * SemiBold, body Regular and labels SemiBold — quiet type so the artwork
+ * color carries the personality.
  */
-private fun figtree(weight: Int): FontFamily = FontFamily(
+private fun geist(weight: Int): FontFamily = FontFamily(
     Font(
-        R.font.figtree,
+        R.font.geist,
         weight = when {
-            weight >= 800 -> FontWeight.ExtraBold
             weight >= 700 -> FontWeight.Bold
             weight >= 600 -> FontWeight.SemiBold
             weight >= 500 -> FontWeight.Medium
@@ -34,23 +32,23 @@ private fun figtree(weight: Int): FontFamily = FontFamily(
 )
 
 val SpotiAisexsTypography = Typography(
-    displayLarge = TextStyle(fontFamily = figtree(800), fontWeight = FontWeight.ExtraBold, fontSize = 57.sp, lineHeight = 62.sp, letterSpacing = (-1.4).sp),
-    displayMedium = TextStyle(fontFamily = figtree(800), fontWeight = FontWeight.ExtraBold, fontSize = 45.sp, lineHeight = 50.sp, letterSpacing = (-1.1).sp),
-    displaySmall = TextStyle(fontFamily = figtree(800), fontWeight = FontWeight.ExtraBold, fontSize = 36.sp, lineHeight = 42.sp, letterSpacing = (-0.9).sp),
-    // Large title (Apple) / page header (Spotify): the screen titles.
-    headlineLarge = TextStyle(fontFamily = figtree(800), fontWeight = FontWeight.ExtraBold, fontSize = 34.sp, lineHeight = 40.sp, letterSpacing = (-0.8).sp),
-    headlineMedium = TextStyle(fontFamily = figtree(800), fontWeight = FontWeight.ExtraBold, fontSize = 28.sp, lineHeight = 34.sp, letterSpacing = (-0.6).sp),
-    headlineSmall = TextStyle(fontFamily = figtree(800), fontWeight = FontWeight.ExtraBold, fontSize = 24.sp, lineHeight = 30.sp, letterSpacing = (-0.5).sp),
-    // Section headers ("Hecho para ti").
-    titleLarge = TextStyle(fontFamily = figtree(800), fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, lineHeight = 28.sp, letterSpacing = (-0.4).sp),
-    titleMedium = TextStyle(fontFamily = figtree(700), fontWeight = FontWeight.Bold, fontSize = 16.sp, lineHeight = 22.sp, letterSpacing = (-0.1).sp),
-    titleSmall = TextStyle(fontFamily = figtree(700), fontWeight = FontWeight.Bold, fontSize = 14.sp, lineHeight = 20.sp),
-    bodyLarge = TextStyle(fontFamily = figtree(450), fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 24.sp),
-    bodyMedium = TextStyle(fontFamily = figtree(450), fontWeight = FontWeight.Normal, fontSize = 15.sp, lineHeight = 21.sp),
-    bodySmall = TextStyle(fontFamily = figtree(450), fontWeight = FontWeight.Normal, fontSize = 13.sp, lineHeight = 17.sp),
-    labelLarge = TextStyle(fontFamily = figtree(700), fontWeight = FontWeight.Bold, fontSize = 14.sp, lineHeight = 20.sp),
-    labelMedium = TextStyle(fontFamily = figtree(700), fontWeight = FontWeight.Bold, fontSize = 12.sp, lineHeight = 16.sp),
-    labelSmall = TextStyle(fontFamily = figtree(700), fontWeight = FontWeight.Bold, fontSize = 11.sp, lineHeight = 15.sp, letterSpacing = 0.2.sp),
+    displayLarge = TextStyle(fontFamily = geist(700), fontWeight = FontWeight.Bold, fontSize = 57.sp, lineHeight = 62.sp, letterSpacing = (-2.0).sp),
+    displayMedium = TextStyle(fontFamily = geist(700), fontWeight = FontWeight.Bold, fontSize = 45.sp, lineHeight = 50.sp, letterSpacing = (-1.6).sp),
+    displaySmall = TextStyle(fontFamily = geist(700), fontWeight = FontWeight.Bold, fontSize = 36.sp, lineHeight = 42.sp, letterSpacing = (-1.2).sp),
+    // Large titles ("Inicio", "Biblioteca").
+    headlineLarge = TextStyle(fontFamily = geist(700), fontWeight = FontWeight.Bold, fontSize = 34.sp, lineHeight = 40.sp, letterSpacing = (-1.0).sp),
+    headlineMedium = TextStyle(fontFamily = geist(700), fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 34.sp, letterSpacing = (-0.8).sp),
+    headlineSmall = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 24.sp, lineHeight = 30.sp, letterSpacing = (-0.5).sp),
+    // Section headers ("Escuchado hace poco").
+    titleLarge = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 26.sp, letterSpacing = (-0.4).sp),
+    titleMedium = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 22.sp, letterSpacing = (-0.1).sp),
+    titleSmall = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp),
+    bodyLarge = TextStyle(fontFamily = geist(400), fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontFamily = geist(400), fontWeight = FontWeight.Normal, fontSize = 15.sp, lineHeight = 21.sp),
+    bodySmall = TextStyle(fontFamily = geist(400), fontWeight = FontWeight.Normal, fontSize = 13.sp, lineHeight = 17.sp),
+    labelLarge = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp),
+    labelMedium = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 12.sp, lineHeight = 16.sp),
+    labelSmall = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 11.sp, lineHeight = 15.sp, letterSpacing = 0.1.sp),
 )
 
 /**

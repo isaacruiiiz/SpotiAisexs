@@ -1,5 +1,6 @@
 package com.spotiaisexs.app.data.music
 
+import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import com.spotiaisexs.app.data.local.AppLanguage
@@ -9,6 +10,7 @@ import java.util.Locale
 import com.spotiaisexs.app.data.music.potoken.BotGuardTokenGenerator
 import com.spotiaisexs.app.data.ytmusic.YtMusicAuthManager
 import com.spotiaisexs.app.data.ytmusic.YtConnection
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -184,6 +186,7 @@ data class YtOwnedPlaylist(
  */
 @Singleton
 class InnerTubeMusicApi @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val http: OkHttpClient,
     private val streamExtractor: YouTubeStreamExtractor,
     private val innerTubeXExtractor: InnerTubeXStreamExtractor,
@@ -200,6 +203,11 @@ class InnerTubeMusicApi @Inject constructor(
     private val lastResolvedStreams = ConcurrentHashMap<String, YouTubeAudioStream>()
     @Volatile private var lastSuccessfulClientName: String? = null
     @Volatile private var webConfig: WebConfig? = null
+    /** A fallback config (no visitor data) is only trusted briefly, then refetched. */
+    @Volatile private var webConfigFallbackUntil = 0L
+    private val webConfigPrefs by lazy {
+        appContext.getSharedPreferences("innertube_web_config", Context.MODE_PRIVATE)
+    }
 
     fun invalidateCache(videoId: String) {
         streamCache.keys.removeIf { it.videoId == videoId }
@@ -2931,14 +2939,65 @@ class InnerTubeMusicApi @Inject constructor(
         runCatching { BotGuardTokenGenerator.preWarm(visitor) }
     }
 
+    private fun WebConfig.usable(): Boolean =
+        visitorData != null || SystemClock.elapsedRealtime() < webConfigFallbackUntil
+
     private suspend fun getWebConfig(): WebConfig {
-        webConfig?.let { return it }
+        webConfig?.takeIf { it.usable() }?.let { return it }
         return configMutex.withLock {
-            webConfig?.let { return@withLock it }
-            val config = runCatching { fetchWebConfig() }
-                .getOrElse { WebConfig(FALLBACK_WEB_KEY, FALLBACK_WEB_VERSION, null) }
+            webConfig?.takeIf { it.usable() }?.let { return@withLock it }
+            val fetched = runCatching { fetchWebConfig() }.getOrNull()
+            if (fetched?.visitorData != null) persistWebConfig(fetched)
+            // Before: a failed fetch (e.g. the network still waking up at app
+            // start) cached a visitor-less fallback for the whole session, which
+            // sent every song down the slower resolution stages.
+            val config = fetched?.takeIf { it.visitorData != null }
+                ?: loadPersistedWebConfig()
+                ?: fetched
+                ?: WebConfig(FALLBACK_WEB_KEY, FALLBACK_WEB_VERSION, null)
+            if (config.visitorData == null) {
+                webConfigFallbackUntil = SystemClock.elapsedRealtime() + WEB_CONFIG_FALLBACK_TTL_MS
+            }
             webConfig = config
             config
+        }
+    }
+
+    /**
+     * Called at app start (no delay): seeds the web config from disk at once,
+     * so the very first song's fast path already has visitor data, then
+     * refreshes it from the network in the background. Never throws.
+     */
+    suspend fun warmUpConfig() = withContext(Dispatchers.IO) {
+        if (webConfig == null) loadPersistedWebConfig()?.let { webConfig = it }
+        runCatching {
+            val fresh = fetchWebConfig()
+            if (fresh.visitorData != null) {
+                webConfig = fresh
+                persistWebConfig(fresh)
+            }
+        }
+        Unit
+    }
+
+    private fun loadPersistedWebConfig(): WebConfig? = runCatching {
+        val savedAt = webConfigPrefs.getLong("savedAt", 0L)
+        if (System.currentTimeMillis() - savedAt > WEB_CONFIG_DISK_MAX_AGE_MS) return@runCatching null
+        WebConfig(
+            apiKey = webConfigPrefs.getString("apiKey", null) ?: return@runCatching null,
+            clientVersion = webConfigPrefs.getString("clientVersion", null) ?: return@runCatching null,
+            visitorData = webConfigPrefs.getString("visitorData", null) ?: return@runCatching null,
+        )
+    }.getOrNull()
+
+    private fun persistWebConfig(config: WebConfig) {
+        runCatching {
+            webConfigPrefs.edit()
+                .putString("apiKey", config.apiKey)
+                .putString("clientVersion", config.clientVersion)
+                .putString("visitorData", config.visitorData)
+                .putLong("savedAt", System.currentTimeMillis())
+                .apply()
         }
     }
 
@@ -3730,6 +3789,8 @@ class InnerTubeMusicApi @Inject constructor(
         const val CLIENT_RACE_TIMEOUT_MS = 8_000L
         /** Hard cap for one full stream resolution; callers retry with fresh state. */
         const val STREAM_RESOLVE_TOTAL_TIMEOUT_MS = 12_000L
+        const val WEB_CONFIG_FALLBACK_TTL_MS = 60_000L
+        const val WEB_CONFIG_DISK_MAX_AGE_MS = 3L * 24 * 60 * 60 * 1000
         /** Bound for the InnerTubeX cipher stage so a hung resolve fails fast. */
         const val INNERTUBEX_STAGE_TIMEOUT_MS = 4_000L
         /** Bound for the last-resort NewPipe stage. */

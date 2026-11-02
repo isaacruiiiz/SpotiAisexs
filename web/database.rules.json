@@ -2,8 +2,35 @@
   "rules": {
     "users": {
       "$uid": {
-        ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid"
+        ".read": "auth != null && auth.uid === $uid && auth.token.firebase.sign_in_provider !== 'anonymous'",
+        ".write": "auth != null && auth.uid === $uid && auth.token.firebase.sign_in_provider !== 'anonymous'",
+        "playback": {
+          ".read": "auth != null && root.child('users').child($uid).child('jam/open').val() === true"
+        },
+        "jam": {
+          "open": {
+            ".read": "auth != null"
+          },
+          "hostName": {
+            ".read": "auth != null"
+          },
+          "added": {
+            ".read": "auth != null && root.child('users').child($uid).child('jam/open').val() === true"
+          },
+          "guests": {
+            ".read": "auth != null && root.child('users').child($uid).child('jam/open').val() === true",
+            "$guest": {
+              ".write": "auth != null && auth.uid === $guest && root.child('users').child($uid).child('jam/open').val() === true && (!newData.exists() || newData.child('code').val() === root.child('users').child($uid).child('jam/code').val())",
+              ".validate": "!newData.exists() || (newData.hasChildren(['name', 'code', 'lastSeen']) && newData.child('name').isString() && newData.child('name').val().length <= 30)"
+            }
+          },
+          "requests": {
+            "$req": {
+              ".write": "auth != null && !data.exists() && newData.exists() && root.child('users').child($uid).child('jam/open').val() === true && newData.child('code').val() === root.child('users').child($uid).child('jam/code').val()",
+              ".validate": "newData.hasChildren(['by', 'at']) && newData.child('by').isString() && newData.child('by').val().length <= 30 && ((newData.child('videoId').isString() && newData.child('videoId').val().length <= 20 && newData.child('title').isString() && newData.child('title').val().length <= 200) || (newData.child('spotifyUrl').isString() && newData.child('spotifyUrl').val().length <= 300))"
+            }
+          }
+        }
       }
     }
   }

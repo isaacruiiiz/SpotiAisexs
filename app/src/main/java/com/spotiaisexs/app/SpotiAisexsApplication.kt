@@ -57,6 +57,11 @@ class SpotiAisexsApplication : Application(), ImageLoaderFactory {
         runCatching { com.spotiaisexs.app.playback.PlaybackDiagnostics.install(this) }
         runCatching { com.spotiaisexs.app.data.music.potoken.BotGuardTokenGenerator.initialize(this) }
         runCatching { com.spotiaisexs.app.data.canvas.CanvasCache.init(this) }
+        // First-song speed: seed + refresh YouTube's visitor data right away
+        // (one small request, no WebView), so the first tap doesn't pay for it.
+        applicationScope.launch(Dispatchers.IO) {
+            runCatching { innerTubeMusicApi.get().warmUpConfig() }
+        }
         applicationScope.launch(Dispatchers.IO) {
             delay(OPTIONAL_STARTUP_DELAY_MS)
             // A process kill can bypass TrackDownloadManager's finally block

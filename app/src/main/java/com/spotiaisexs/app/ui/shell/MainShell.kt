@@ -163,7 +163,7 @@ private enum class MainTab(val labelRes: Int) {
  *  overlays content (it's not a Scaffold bottomBar reserving space), so
  *  each screen leaves this much room for its last item to clear it. */
 object FloatingNavDefaults {
-    val ContentBottomPadding = 112.dp
+    val ContentBottomPadding = 92.dp
 
     /**
      * Full bottom clearance for edge-to-edge scrolling content: the floating
@@ -179,7 +179,10 @@ object FloatingNavDefaults {
             WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
 }
 
-private val DockShape: CornerBasedShape = RoundedCornerShape(32.dp)
+// Design "Cristal, color de portada": a thin capsule (46 dp) instead of the tall dock.
+private val DockShape: CornerBasedShape = RoundedCornerShape(23.dp)
+private val NavBarHeight = 46.dp
+private val NavItemHeight = 36.dp
 private val PillShape: Shape = CircleShape
 
 private fun <T> navSpring() = ExpressiveMotion.spatialSpring<T>()
@@ -445,8 +448,9 @@ private fun FloatingNavBar(
                                 Modifier
                             },
                         )
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        .height(NavBarHeight)
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     tabs.forEachIndexed { index, tab ->
@@ -491,7 +495,7 @@ private fun FloatingNavBar(
                         shadowElevation = if (liquidGlass) 0.dp else 10.dp,
                         tonalElevation = if (liquidGlass) 0.dp else 4.dp,
                         modifier = Modifier
-                            .size(56.dp)
+                            .size(NavBarHeight)
                             .liquidGlassChrome(CircleShape, liquidGlass, LiquidGlassPreset.FloatingControls, backdrop, interactionSource = fabInteraction)
                             .clickable(interactionSource = fabInteraction, indication = null, onClick = onOpenGenerator),
                     ) {
@@ -500,7 +504,7 @@ private fun FloatingNavBar(
                                 imageVector = Icons.Filled.AutoAwesome,
                                 contentDescription = androidx.compose.ui.res.stringResource(com.spotiaisexs.app.R.string.nav_create_playlist),
                                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(24.dp),
+                                modifier = Modifier.size(20.dp),
                             )
                         }
                     }
@@ -522,7 +526,7 @@ private fun FloatingNavBar(
                     shadowElevation = if (liquidGlass) 0.dp else 12.dp,
                     tonalElevation = if (liquidGlass) 0.dp else 6.dp,
                     modifier = Modifier
-                        .size(56.dp)
+                        .size(NavBarHeight)
                         .liquidGlassChrome(CircleShape, liquidGlass, LiquidGlassPreset.BottomNavigation, backdrop, interactionSource = searchInteraction)
                         .clickable(interactionSource = searchInteraction, indication = null, onClick = onOpenSearch),
                 ) {
@@ -531,7 +535,7 @@ private fun FloatingNavBar(
                             imageVector = Icons.Filled.Search,
                             contentDescription = androidx.compose.ui.res.stringResource(com.spotiaisexs.app.R.string.nav_search),
                             tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(24.dp),
+                            modifier = Modifier.size(20.dp),
                         )
                     }
                 }
@@ -547,75 +551,46 @@ private fun FloatingNavItem(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    // The active tab is a solid pill in the artwork accent with dark ink;
+    // the others keep icon + label in a muted tone, all on one line.
     val backgroundColor by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(
-            alpha = if (LocalLiquidGlass.current) 0.28f else 1f,
-        ) else Color.Transparent,
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
         animationSpec = navSpring(),
         label = "navItemBackground",
     )
     val contentColor by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+        targetValue = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
         animationSpec = navSpring(),
         label = "navItemContent",
     )
-    // Animate the pill padding instead of jumping it: combined with the label
-    // expand below this gives one smooth width change. (Previously this
-    // Surface also had animateContentSize on top of the label expand — the two
-    // competing width animations clipped the pill to a rectangle and cut the
-    // label mid-switch.)
-    val horizontalPadding by animateDpAsState(
-        targetValue = if (selected) 18.dp else 12.dp,
-        animationSpec = navSpring(),
-        label = "navItemPadding",
-    )
-
     Surface(
         onClick = onClick,
         shape = PillShape,
         color = backgroundColor,
-        modifier = Modifier.height(48.dp),
+        modifier = Modifier.height(NavItemHeight),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
             modifier = Modifier
-                .padding(horizontal = horizontalPadding)
-                .height(48.dp),
+                .padding(horizontal = 14.dp)
+                .height(NavItemHeight),
         ) {
             Icon(
                 imageVector = icon,
-                contentDescription = label,
+                contentDescription = null,
                 tint = contentColor,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(18.dp),
             )
-            AnimatedVisibility(
-                visible = selected,
-                enter = fadeIn(animationSpec = navSpring()) + expandHorizontally(
-                    animationSpec = navSpring(),
-                    expandFrom = Alignment.Start,
-                    clip = false,
-                ),
-                exit = fadeOut(animationSpec = tween(90)) + shrinkHorizontally(
-                    animationSpec = navSpring(),
-                    shrinkTowards = Alignment.Start,
-                    clip = false,
-                ),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(start = 8.dp),
-                ) {
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = contentColor,
-                        maxLines = 1,
-                        softWrap = false,
-                    )
-                }
-            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                color = contentColor,
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.padding(start = 6.dp),
+            )
         }
     }
 }

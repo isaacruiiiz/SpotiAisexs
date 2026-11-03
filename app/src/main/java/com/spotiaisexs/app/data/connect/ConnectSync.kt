@@ -547,6 +547,14 @@ class ConnectSync @Inject constructor(
         handledJamRequests.clear()
         jamAddedBy.clear()
         rest("PUT", "jam", body.toString())
+        // Show the QR at once, even before the read-back arrives.
+        _jam.value = JamState(
+            open = true,
+            code = code,
+            hostName = hostName.trim().ifBlank { "SpotiAisexs" }.take(30),
+            hostDevice = stored.deviceId,
+            createdAt = serverNow(),
+        )
         refreshJam()
     }
 
@@ -574,12 +582,34 @@ class ConnectSync @Inject constructor(
         refreshJam()
     }
 
+    /**
+     * Decodes users/{uid}/jam. If one guest request or presence entry is
+     * malformed, the full decode used to fail and the Jam looked closed (no
+     * QR, start form shown again); now the basics always survive.
+     */
+    private fun parseJamState(raw: String): JamState? {
+        val element = runCatching { json.parseToJsonElement(raw) }.getOrNull() ?: return null
+        if (element is JsonNull || element !is JsonObject) return null
+        runCatching { return json.decodeFromJsonElement<JamState>(element) }
+            .onFailure { Log.w(TAG, "Jam: full decode failed, keeping the basics", it) }
+        fun str(key: String) = (element[key] as? JsonPrimitive)?.contentOrNull
+        fun <T> entries(key: String, decode: (JsonElement) -> T): Map<String, T> =
+            (element[key] as? JsonObject)?.mapNotNull { (k, v) -> runCatching { k to decode(v) }.getOrNull() }?.toMap().orEmpty()
+        return JamState(
+            open = str("open") == "true",
+            code = str("code"),
+            hostName = str("hostName"),
+            hostDevice = str("hostDevice"),
+            createdAt = str("createdAt")?.toDoubleOrNull()?.toLong() ?: 0L,
+            guests = entries("guests") { json.decodeFromJsonElement<JamGuest>(it) },
+            requests = entries("requests") { json.decodeFromJsonElement<JamRequest>(it) },
+            added = entries("added") { json.decodeFromJsonElement<JamAdded>(it) },
+        )
+    }
+
     private suspend fun refreshJam() {
         val raw = runCatching { rest("GET", "jam", null) }.getOrNull() ?: return
-        val state = runCatching {
-            val element = json.parseToJsonElement(raw)
-            if (element is JsonNull) null else json.decodeFromJsonElement<JamState>(element)
-        }.getOrNull()
+        val state = parseJamState(raw)
         _jam.value = state
         if (state?.open != true) return
         state.added.forEach { (videoId, added) -> jamAddedBy[videoId] = added.by }

@@ -129,6 +129,8 @@ de la que suena y en el orden en que las pidieron, como en la Jam de Spotify.
 
 - En la web: botón **Jam** de la barra inferior → **Empezar Jam**.
 - En el teléfono: **Ajustes → Web y Jam → Empezar Jam**.
+- En el coche (Android Auto): pestaña **Jam → Empezar Jam**; el QR aparece en
+  grande para que lo escaneen desde el asiento de al lado.
 - Enseña el QR o comparte el enlace. Cada amigo pone su nombre y ve la cola:
   lo que suena y lo que viene, con quién añadió cada canción.
 - Para añadir, buscan la canción y tocan **⋯ → Añadir a la cola**, o la

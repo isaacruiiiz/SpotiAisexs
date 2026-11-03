@@ -138,6 +138,8 @@ class FeedViewModel @Inject constructor(
                     )
                 }
                 lastLoadedMillis = System.currentTimeMillis()
+                // The first quick picks are the most likely first tap: get their audio ready.
+                musicPlayer.prefetchLikelyStart(data.quickPicks.take(2).map { it.toPlayableTrack() })
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (_: Exception) {

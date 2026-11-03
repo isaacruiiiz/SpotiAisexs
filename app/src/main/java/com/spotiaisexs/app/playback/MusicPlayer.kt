@@ -1964,6 +1964,34 @@ class MusicPlayer @Inject constructor(
         }
     }
 
+    private val prefetchedStarts = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
+
+    /**
+     * Prepares the audio of what the user is most likely to tap next (the top
+     * of the list on screen: an opened playlist, the home's quick picks), so
+     * pressing play starts from a ready stream instead of a cold resolution.
+     * Cheap: one player request per song, cached by InnerTube.
+     */
+    fun prefetchLikelyStart(tracks: List<PlayableTrack>, limit: Int = 2) {
+        val picks = tracks.asSequence()
+            .filter { it.playbackUrl == null && it.title.isNotBlank() }
+            .filter { prefetchedStarts.add(it.mediaIdKey()) }
+            .take(limit)
+            .toList()
+        if (picks.isEmpty()) return
+        synchronized(prefetchedStarts) {
+            while (prefetchedStarts.size > PREFETCH_MEMORY) prefetchedStarts.remove(prefetchedStarts.first())
+        }
+        applicationScope.launch(Dispatchers.IO) {
+            for (track in picks) {
+                val id = track.videoId?.takeIf(String::isNotBlank)
+                    ?: runCatching { innerTube.findBestMatchOrNull(track.title, track.artist, prefetchStreams = false)?.videoId }.getOrNull()
+                    ?: continue
+                innerTube.prefetchStream(id)
+            }
+        }
+    }
+
     /** Adds the varied continuation loaded for a search-started track.
      * A stale response can never modify a newer playback queue. */
     fun appendSearchRecommendations(seed: PlayableTrack, tracks: List<PlayableTrack>) {
@@ -4966,7 +4994,43 @@ class MusicPlayer @Inject constructor(
         )
     }
 
-    private suspend fun resolveLocalDownloadedAudioStream(track: PlayableTrack): ResolvedStream? {
+    /**
+     * File-name index of the download folders. Walking them (up to 6 levels)
+     * on every song that is NOT downloaded made the very first play wait on
+     * disk I/O — the YouTube stream was ready but this check had to finish
+     * first. Built once in the background and reused for a few minutes.
+     */
+    @Volatile private var downloadFileIndex: Pair<Long, Map<String, File>>? = null
+    private val downloadIndexBuilding = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private fun buildDownloadFileIndex(searchDirs: List<File>): Map<String, File> {
+        val indexed = mutableMapOf<String, File>()
+        for (dir in searchDirs) {
+            runCatching {
+                dir.walkTopDown().maxDepth(6).forEach { f ->
+                    if (f.isFile && f.length() > 0) indexed.getOrPut(f.name) { f }
+                }
+            }
+        }
+        downloadFileIndex = SystemClock.elapsedRealtime() to indexed
+        return indexed
+    }
+
+    /** The cached index; when [quick] and it isn't ready, it is built in the background and null is returned. */
+    private fun downloadIndexFor(searchDirs: List<File>, quick: Boolean): Map<String, File>? {
+        downloadFileIndex?.let { (builtAt, index) ->
+            if (SystemClock.elapsedRealtime() - builtAt < DOWNLOAD_INDEX_TTL_MS) return index
+        }
+        if (!quick) return buildDownloadFileIndex(searchDirs)
+        if (downloadIndexBuilding.compareAndSet(false, true)) {
+            applicationScope.launch(Dispatchers.IO) {
+                try { buildDownloadFileIndex(searchDirs) } finally { downloadIndexBuilding.set(false) }
+            }
+        }
+        return downloadFileIndex?.second
+    }
+
+    private suspend fun resolveLocalDownloadedAudioStream(track: PlayableTrack, quick: Boolean = false): ResolvedStream? {
         val title = track.title.trim()
         val artist = track.artist.trim()
 
@@ -5004,7 +5068,8 @@ class MusicPlayer @Inject constructor(
                     ?: dao.findByTitleAndArtist(title, artist)
                     ?: (if (cleanKey != key) dao.findByTrackKey(cleanKey) else null)
                     ?: (if (cleanTitle != title || cleanArtist != artist) dao.findByTitleAndArtist(cleanTitle, cleanArtist) else null)
-                    ?: dao.getAllList().firstOrNull { entity ->
+                    // The fuzzy scan reads every download: skipped while the user waits on silence.
+                    ?: if (quick) null else dao.getAllList().firstOrNull { entity ->
                         val eTitle = entity.title.trim()
                         val eArtist = entity.artist.trim()
                         eTitle.equals(title, ignoreCase = true) && eArtist.equals(artist, ignoreCase = true) ||
@@ -5054,15 +5119,7 @@ class MusicPlayer @Inject constructor(
         ).map { sanitizeFilename(it) }.distinct()
 
         val searchDirs = (downloadDirs.filter { it.exists() } + listOfNotNull(appMusicDir?.takeIf { it.exists() })).distinctBy { it.absolutePath }
-        // Index each dir once (organized subfolders can hold many files).
-        val indexedByName = mutableMapOf<String, File>()
-        for (dir in searchDirs) {
-            runCatching {
-                dir.walkTopDown().maxDepth(6).forEach { f ->
-                    if (f.isFile && f.length() > 0) indexedByName.getOrPut(f.name) { f }
-                }
-            }
-        }
+        val indexedByName = downloadIndexFor(searchDirs, quick) ?: return null
         for (base in candidateBases) {
             for (ext in candidateExtensions) {
                 val candidateFile = indexedByName["$base.$ext"] ?: continue
@@ -5163,7 +5220,7 @@ class MusicPlayer @Inject constructor(
         // it no longer blocks YouTube/lossless from staging in parallel.
         val forkStart = SystemClock.elapsedRealtime()
         val localDeferred = applicationScope.async(Dispatchers.IO) {
-            if (allowLocalDownloads) runCatching { resolveLocalDownloadedAudioStream(track) }.getOrNull() else null
+            if (allowLocalDownloads) runCatching { resolveLocalDownloadedAudioStream(track, quick = urgent) }.getOrNull() else null
         }
         val youtubeDeferred = applicationScope.async(Dispatchers.IO) {
             runCatching { resolveYoutubeTrackAudioStream(track, videoId) }.getOrNull()
@@ -6490,6 +6547,8 @@ class MusicPlayer @Inject constructor(
         const val NEXT_TRACK_PREFETCH_BYTES = 1L * 1024 * 1024
         const val NEXT_TRACK_PREFETCH_DELAY_MS = 150L
         /** Lossless wait while the user hears silence (YouTube plays meanwhile if it's ready). */
+        const val DOWNLOAD_INDEX_TTL_MS = 5L * 60 * 1000
+        const val PREFETCH_MEMORY = 60
         const val URGENT_LOSSLESS_BUDGET_MS = 1_500L
         const val URGENT_DOLBY_BUDGET_MS = 3_000L
         /** Max time the radio waits for the first song's stream before fetching. */

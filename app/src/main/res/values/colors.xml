@@ -9,4 +9,9 @@
          the five tangerine bars. Used as the adaptive icon's background layer,
          paired with ic_launcher_foreground for the bars. -->
     <color name="ic_launcher_background">#FF141414</color>
+
+    <!-- Android Auto: the default accent of the design ("Cristal, color de
+         portada": hsl(16, 90%, 76%) from #FF7A45) and its dark ink. -->
+    <color name="auto_accent">#FFF9A88B</color>
+    <color name="auto_accent_ink">#FF2A0F06</color>
 </resources>

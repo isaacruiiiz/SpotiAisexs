@@ -201,7 +201,19 @@ class InnerTubeMusicApi @Inject constructor(
     private val apiScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val failedClientsUntil = ConcurrentHashMap<String, Long>()
     private val lastResolvedStreams = ConcurrentHashMap<String, YouTubeAudioStream>()
+    /** Remembered across launches: the first song of a fresh process tries the
+     *  client that worked last time first instead of the fixed order. */
     @Volatile private var lastSuccessfulClientName: String? = null
+        get() {
+            field?.let { return it }
+            val saved = runCatching { webConfigPrefs.getString("lastClient", null) }.getOrNull()
+            field = saved
+            return saved
+        }
+        set(value) {
+            if (value != null && value != field) runCatching { webConfigPrefs.edit().putString("lastClient", value).apply() }
+            field = value
+        }
     @Volatile private var webConfig: WebConfig? = null
     /** A fallback config (no visitor data) is only trusted briefly, then refetched. */
     @Volatile private var webConfigFallbackUntil = 0L
@@ -2180,6 +2192,10 @@ class InnerTubeMusicApi @Inject constructor(
         if (ordered.isEmpty()) return@coroutineScope null
 
         val channel = kotlinx.coroutines.channels.Channel<YouTubeAudioStream>(ordered.size)
+        // Before: when every client failed nobody closed the channel, so the
+        // caller sat out the whole 4 s budget before the next stage even
+        // started — on every song whose fast path missed, first song included.
+        val pending = java.util.concurrent.atomic.AtomicInteger(ordered.size)
         val jobs = ordered.mapIndexed { index, client ->
             launch(Dispatchers.IO) {
                 // Hedged stagger: each client gets a short head start over the
@@ -2212,6 +2228,7 @@ class InnerTubeMusicApi @Inject constructor(
                     lastSuccessfulClientName = client.name
                     channel.trySend(stream)
                 }
+                if (pending.decrementAndGet() == 0) channel.close()
             }
         }
         val winner = kotlinx.coroutines.withTimeoutOrNull(DIRECT_FAST_PATH_BUDGET_MS) {

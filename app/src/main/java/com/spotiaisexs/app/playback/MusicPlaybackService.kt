@@ -55,6 +55,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -269,7 +270,16 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
         scope.launch {
             androidAutoLibrary.playlistChanges.collect {
                 notifyCarLibraryChanged(AndroidAutoMediaLibrary.PLAYLISTS_ID)
+                notifyCarLibraryChanged(AndroidAutoMediaLibrary.LIBRARY_ID)
+                notifyCarLibraryChanged(AndroidAutoMediaLibrary.HOME_ID)
             }
+        }
+        scope.launch {
+            // Jam tab: QR appears when a Jam opens, guests update, tile resets when it ends.
+            androidAutoLibrary.jamChanges
+                .map { jam -> Triple(jam?.open, jam?.code, jam?.guests?.values?.map { it.name }?.sorted()) }
+                .distinctUntilChanged()
+                .collect { notifyCarLibraryChanged(AndroidAutoMediaLibrary.JAM_ID) }
         }
         scope.launch {
             androidAutoLibrary.downloadChanges.distinctUntilChanged().collect {
@@ -297,7 +307,7 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
         return BrowserRoot(
             AndroidAutoMediaLibrary.ROOT_ID,
             Bundle().apply {
-                putInt(CONTENT_STYLE_BROWSABLE_HINT, CONTENT_STYLE_LIST)
+                putInt(CONTENT_STYLE_BROWSABLE_HINT, AndroidAutoMediaLibrary.CONTENT_STYLE_GRID)
                 putInt(CONTENT_STYLE_PLAYABLE_HINT, CONTENT_STYLE_LIST)
                 putBoolean("android.media.browse.SEARCH_SUPPORTED", true)
             },

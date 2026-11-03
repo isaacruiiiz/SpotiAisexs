@@ -1,5 +1,6 @@
 package com.spotiaisexs.app.ui.playlist
 
+import com.spotiaisexs.app.playback.toPlayableTrack
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -76,6 +77,7 @@ class PlaylistViewModel @Inject constructor(
     private val ytMusicSyncManager: com.spotiaisexs.app.data.ytmusic.YtMusicSyncManager,
     private val ytMusicLibraryManager: com.spotiaisexs.app.data.ytmusic.YtMusicLibraryManager,
     private val trackDownloadManager: com.spotiaisexs.app.data.download.TrackDownloadManager,
+    private val musicPlayer: com.spotiaisexs.app.playback.MusicPlayer,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlaylistUiState())
@@ -234,6 +236,10 @@ class PlaylistViewModel @Inject constructor(
                 }
             } else {
                 playlistRepository.getById(playlistId)
+            }
+            // The first song is what "play" starts: have its audio ready.
+            pl?.tracks?.take(1)?.let { first ->
+                musicPlayer.prefetchLikelyStart(first.map { it.toPlayableTrack() }, limit = 1)
             }
             _uiState.update {
                 it.copy(

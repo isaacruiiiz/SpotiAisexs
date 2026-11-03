@@ -103,6 +103,7 @@ import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
@@ -659,6 +660,9 @@ fun PlayerHost(
         }
     }
     val miniPlayerVisible = state.current != null && !expanded
+    var showJamSheet by rememberSaveable { mutableStateOf(false) }
+    val connectViewModel: com.spotiaisexs.app.ui.connect.ConnectViewModel = hiltViewModel()
+    val jamState by connectViewModel.jam.collectAsStateWithLifecycle()
 
     // Sibling pattern: ONE backdrop capturing feed content,
     // consumed by the sibling MiniPlayer. Unconditional remember keeps composition stable.
@@ -687,11 +691,17 @@ fun PlayerHost(
                     onPrevious = viewModel.player::previous,
                     onNext = viewModel.player::next,
                     onClose = viewModel.player::stopAndClear,
-                    bottomPadding = if (hasBottomNavigation) 92.dp else 12.dp,
+                    onJam = { showJamSheet = true },
+                    jamLive = jamState?.open == true,
+                    // 12 (nav margin) + 46 (nav height) + 10 gap: the pill sits just above the nav.
+                    bottomPadding = if (hasBottomNavigation) 68.dp else 12.dp,
                     edgeToEdge = !hasBottomNavigation,
                     backdrop = if (miniGlass) miniBackdrop else null,
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
+            }
+            if (showJamSheet) {
+                com.spotiaisexs.app.ui.connect.JamQuickSheet(onDismiss = { showJamSheet = false })
             }
             if (activeDownloads.isNotEmpty() && !expanded) {
                 val latestProgress = activeDownloads.firstOrNull()?.progressPercent ?: 0
@@ -860,6 +870,8 @@ private fun MiniPlayer(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onClose: () -> Unit,
+    onJam: () -> Unit,
+    jamLive: Boolean,
     bottomPadding: androidx.compose.ui.unit.Dp,
     edgeToEdge: Boolean,
     backdrop: Backdrop? = LocalLiquidGlassBackdrop.current,
@@ -1010,6 +1022,26 @@ private fun MiniPlayer(
                             color = miniArtistColor,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    // Jam shortcut: opens the Jam sheet (start it, show the QR,
+                    // share the link). Accent-filled while a Jam is live.
+                    IconButton(
+                        onClick = onJam,
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (jamLive) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+                                else Color.Transparent,
+                            ),
+                    ) {
+                        Icon(
+                            Icons.Filled.Groups,
+                            if (jamLive) "Jam en directo" else "Empezar Jam",
+                            tint = if (jamLive) MaterialTheme.colorScheme.primary else miniTitleColor.copy(alpha = 0.85f),
+                            modifier = Modifier.size(22.dp),
                         )
                     }
                     // Inner controls sit plain on the glass card (no nested glass).

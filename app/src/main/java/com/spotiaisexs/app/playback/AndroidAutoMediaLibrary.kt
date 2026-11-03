@@ -356,7 +356,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
         )
     }
 
-    private suspend fun startJam(): Boolean {
+    suspend fun startJam(): Boolean {
         val sync = connectSync.get()
         if (sync.status.value !is ConnectStatus.Connected) return false
         val name = runCatching { sync.savedEmail() }.getOrNull()?.substringBefore('@')?.takeIf(String::isNotBlank) ?: "SpotiAisexs"

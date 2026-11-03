@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -397,7 +398,9 @@ private fun FloatingNavBar(
             .windowInsetsPadding(
                 WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
             )
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            // Same side margin and max width as the mini player pill, so the
+            // nav and the pill line up edge to edge.
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         // No animateContentSize here: the dock pills already animate their own
         // width and the FAB animates its enter/exit size. Animating this outer
         // wrapper at the same time squeezes the Row mid-transition, clipping
@@ -407,6 +410,7 @@ private fun FloatingNavBar(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
+            modifier = Modifier.widthIn(max = 680.dp).fillMaxWidth(),
         ) {
             Surface(
                 shape = DockShape,
@@ -417,7 +421,9 @@ private fun FloatingNavBar(
                 ),
                 tonalElevation = if (liquidGlass) 0.dp else 6.dp,
                 shadowElevation = if (liquidGlass) 0.dp else 12.dp,
-                modifier = Modifier.liquidGlassChrome(DockShape, liquidGlass, LiquidGlassPreset.BottomNavigation, backdrop, interactionSource = dockInteraction),
+                modifier = Modifier
+                    .weight(1f)
+                    .liquidGlassChrome(DockShape, liquidGlass, LiquidGlassPreset.BottomNavigation, backdrop, interactionSource = dockInteraction),
             ) {
                 Row(
                     modifier = Modifier
@@ -448,6 +454,7 @@ private fun FloatingNavBar(
                                 Modifier
                             },
                         )
+                        .fillMaxWidth()
                         .height(NavBarHeight)
                         .padding(horizontal = 4.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -460,6 +467,7 @@ private fun FloatingNavBar(
                             icon = tab.icon(),
                             selected = selectedIndex == index,
                             onClick = onClick,
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
@@ -550,6 +558,7 @@ private fun FloatingNavItem(
     icon: ImageVector,
     selected: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     // The active tab is a solid pill in the artwork accent with dark ink;
     // the others keep icon + label in a muted tone, all on one line.
@@ -567,13 +576,13 @@ private fun FloatingNavItem(
         onClick = onClick,
         shape = PillShape,
         color = backgroundColor,
-        modifier = Modifier.height(NavItemHeight),
+        modifier = modifier.height(NavItemHeight),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
             modifier = Modifier
-                .padding(horizontal = 14.dp)
+                .padding(horizontal = 8.dp)
                 .height(NavItemHeight),
         ) {
             Icon(

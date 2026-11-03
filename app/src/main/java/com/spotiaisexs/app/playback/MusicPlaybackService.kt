@@ -192,6 +192,9 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
                     override fun onPlayFromSearch(query: String?, extras: Bundle?) {
                         playCarSearch(resolveCarSearchQuery(query, extras))
                     }
+                    override fun onCustomAction(action: String?, extras: Bundle?) {
+                        if (action == CUSTOM_ACTION_JAM) startCarJam()
+                    }
                 })
                 setSessionActivity(openAppPendingIntent())
                 // KWGT / Bluetooth / headset discovery happens while idle too:
@@ -279,7 +282,12 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
             androidAutoLibrary.jamChanges
                 .map { jam -> Triple(jam?.open, jam?.code, jam?.guests?.values?.map { it.name }?.sorted()) }
                 .distinctUntilChanged()
-                .collect { notifyCarLibraryChanged(AndroidAutoMediaLibrary.JAM_ID) }
+                .collect {
+                    notifyCarLibraryChanged(AndroidAutoMediaLibrary.JAM_ID)
+                    // Refresh the "Jam" button on the now-playing screen.
+                    systemStateSignature = ""
+                    publishSystemState(musicPlayer.state.value)
+                }
         }
         scope.launch {
             androidAutoLibrary.downloadChanges.distinctUntilChanged().collect {
@@ -385,6 +393,28 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
                 android.util.Log.w("MusicPlaybackService", "Android Auto voice search failed", error)
             }.getOrDefault(false)
             if (!played) publishCarPlaybackError("No playable tracks found")
+        }
+    }
+
+    /**
+     * "Jam" button on Android Auto's now-playing screen. Starts a Jam when
+     * none is open (the QR then shows in the Jam tab); while one is live the
+     * tap does nothing, so a stray touch while driving never ends it —
+     * "Terminar Jam" lives in the Jam tab.
+     */
+    private fun startCarJam() {
+        if (androidAutoLibrary.jamChanges.value?.open == true) return
+        scope.launch {
+            val started = runCatching {
+                withContext(Dispatchers.IO) { androidAutoLibrary.startJam() }
+            }.getOrDefault(false)
+            if (!started) {
+                publishCarPlaybackError("Conecta el móvil con la web en Ajustes → Web y Jam")
+                // Put the normal now-playing state back after the message.
+                delay(4_000)
+                systemStateSignature = ""
+                publishSystemState(musicPlayer.state.value)
+            }
         }
     }
 
@@ -821,7 +851,8 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
             append(state.shuffleEnabled).append('|')
             append(state.repeatMode).append('|')
             append(artworkUrl).append('|')
-            append(artworkBitmap != null)
+            append(artworkBitmap != null).append('|')
+            append(androidAutoLibrary.jamChanges.value?.open == true)
             if (!state.isPlaying) append("|pos=").append(state.positionMs)
         }
         if (signature == systemStateSignature) return
@@ -858,6 +889,13 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
                             PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM or PlaybackStateCompat.ACTION_STOP or
                             PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID or PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH or
                             PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE or PlaybackStateCompat.ACTION_SET_REPEAT_MODE,
+                    )
+                    .addCustomAction(
+                        PlaybackStateCompat.CustomAction.Builder(
+                            CUSTOM_ACTION_JAM,
+                            if (androidAutoLibrary.jamChanges.value?.open == true) "Jam en directo" else "Empezar Jam",
+                            R.drawable.ic_auto_jam,
+                        ).build(),
                     )
                     .setActiveQueueItemId(state.currentIndex.toLong())
                     .setBufferedPosition(state.bufferedPositionMs)
@@ -1368,6 +1406,7 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
         // album + 44dp controls + margins); 128dp clipped the transport row
         // whenever the album line was visible. 152dp leaves breathing room.
         const val EXPANDED_HEIGHT_DP = 152
+        const val CUSTOM_ACTION_JAM = "com.spotiaisexs.app.action.JAM"
         const val CONTENT_STYLE_BROWSABLE_HINT = "android.media.browse.CONTENT_STYLE_BROWSABLE_HINT"
         const val CONTENT_STYLE_PLAYABLE_HINT = "android.media.browse.CONTENT_STYLE_PLAYABLE_HINT"
         const val CONTENT_STYLE_LIST = 1

@@ -192,7 +192,8 @@ class ThemeRepository @Inject constructor(
         settingsPreferences.settings,
     ) { prefs: ThemePrefs, dynamic: String?, nowPlaying: String?, misc: MiscSettings ->
         val isAmoled = prefs.amoled
-        val isGlass = prefs.liquidGlass
+        // Design "Dial" is flat: the old glass chrome is gone whatever the stored setting says.
+        val isGlass = false
         val nowPlayingActive = misc.dynamicNowPlayingEnabled && nowPlaying != null
         val (darkScheme, lightScheme) = when {
             nowPlayingActive -> {
@@ -217,7 +218,8 @@ class ThemeRepository @Inject constructor(
                 dark to light
             }
             else -> {
-                val dark = Md3SchemeBuilder.buildDarkScheme(prefs.accentColor, isAmoled, isGlass)
+                val dark = if (isAmoled) Md3SchemeBuilder.buildDialDarkScheme(prefs.accentColor)
+                else Md3SchemeBuilder.buildDarkScheme(prefs.accentColor, isAmoled, isGlass)
                 val light = Md3SchemeBuilder.buildLightScheme(prefs.accentColor, isGlass)
                 dark to light
             }
@@ -238,15 +240,15 @@ class ThemeRepository @Inject constructor(
         applicationScope,
         SharingStarted.Eagerly,
         ThemeUiState(
-            darkColorScheme = Md3SchemeBuilder.buildDarkScheme(ThemePrefs.DEFAULT_ACCENT, true),
+            darkColorScheme = Md3SchemeBuilder.buildDialDarkScheme(ThemePrefs.DEFAULT_ACCENT),
             lightColorScheme = Md3SchemeBuilder.buildLightScheme(ThemePrefs.DEFAULT_ACCENT, false),
             themeMode = ThemeMode.DARK,
-            colorScheme = Md3SchemeBuilder.buildDarkScheme(ThemePrefs.DEFAULT_ACCENT, true),
+            colorScheme = Md3SchemeBuilder.buildDialDarkScheme(ThemePrefs.DEFAULT_ACCENT),
             amoled = true,
             mode = AccentMode.MANUAL,
             accentColorHex = ThemePrefs.DEFAULT_ACCENT,
             useCustomFont = true,
-            liquidGlass = true,
+            liquidGlass = false,
         ),
     )
 

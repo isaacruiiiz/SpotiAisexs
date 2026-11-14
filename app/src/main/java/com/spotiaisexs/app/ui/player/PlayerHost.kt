@@ -80,6 +80,8 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.windowInsetsPadding
 import com.spotiaisexs.app.ui.common.adaptiveContentWidth
 import com.spotiaisexs.app.ui.common.isTabletOrWideScreen
@@ -676,7 +678,7 @@ fun PlayerHost(
     CompositionLocalProvider(
         LocalMusicPlayer provides viewModel.player,
         LocalAddToPlaylist provides requestAddToPlaylist,
-        LocalMiniPlayerScrollClearance provides if (state.current != null) 88.dp else 0.dp,
+        LocalMiniPlayerScrollClearance provides if (state.current != null) 62.dp else 0.dp,
     ) {
         Box(Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxSize().liquidGlassSource(if (miniGlass) miniBackdrop else null)) {
@@ -693,8 +695,8 @@ fun PlayerHost(
                     onClose = viewModel.player::stopAndClear,
                     onJam = { showJamSheet = true },
                     jamLive = jamState?.open == true,
-                    // 12 (nav margin) + 46 (nav height) + 10 gap: the pill sits just above the nav.
-                    bottomPadding = if (hasBottomNavigation) 68.dp else 12.dp,
+                    // The bar rests directly on the 58 dp navigation bar.
+                    bottomPadding = if (hasBottomNavigation) 58.dp else 0.dp,
                     edgeToEdge = !hasBottomNavigation,
                     backdrop = if (miniGlass) miniBackdrop else null,
                     modifier = Modifier.align(Alignment.BottomCenter),
@@ -921,7 +923,9 @@ private fun MiniPlayer(
     val shownY by animateFloatAsState(dragY, ExpressiveMotion.spatialSpring(), label = "miniPlayerY")
     val threshold = with(LocalDensity.current) { 72.dp.toPx() }
     val isTablet = isTabletOrWideScreen()
-    val shape = if (edgeToEdge && !isTablet) RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp) else RoundedCornerShape(100)
+    // Design "Dial": a flat bar, edge to edge, resting on the navigation bar.
+    val shape = androidx.compose.ui.graphics.RectangleShape
+    val hairline = MaterialTheme.colorScheme.outlineVariant
     val positionedModifier = if (edgeToEdge && !isTablet) {
         modifier.fillMaxWidth()
     } else {
@@ -929,9 +933,7 @@ private fun MiniPlayer(
             .windowInsetsPadding(
                 WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
             )
-            .padding(horizontal = 14.dp)
-            .padding(bottom = if (isTablet && edgeToEdge) 14.dp else bottomPadding)
-            .widthIn(max = 680.dp)
+            .padding(bottom = if (isTablet && edgeToEdge) 0.dp else bottomPadding)
             .fillMaxWidth()
     }
     Box(
@@ -966,10 +968,12 @@ private fun MiniPlayer(
         Surface(
             shape = shape,
             // Transparent card when glass (glass draws scrim), 95% primaryContainer otherwise to match theme color.
-            color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.primaryContainer,
-            tonalElevation = if (edgeToEdge || isGlass) 0.dp else 6.dp,
-            shadowElevation = if (edgeToEdge || isGlass) 0.dp else 12.dp,
-            modifier = Modifier.fillMaxWidth().then(
+            color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.background,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+            modifier = Modifier.fillMaxWidth().drawBehind {
+                drawLine(hairline, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx())
+            }.then(
                 if (isGlass && backdrop != null) {
                     Modifier.liquidGlass(backdrop, layer, luminance.value, shape)
                 } else Modifier
@@ -985,40 +989,39 @@ private fun MiniPlayer(
                 },
             ) {
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                    Modifier.fillMaxWidth().height(58.dp).padding(start = 20.dp, end = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(Modifier.size(56.dp)) {
+                    Box(Modifier.size(40.dp)) {
                         Surface(
-                            shape = RoundedCornerShape(18.dp),
+                            shape = RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            tonalElevation = 2.dp,
                             modifier = Modifier.fillMaxSize(),
                         ) {
-                            PlayerArtwork(track, Modifier.fillMaxSize(), 18.dp)
+                            PlayerArtwork(track, Modifier.fillMaxSize(), 4.dp)
                         }
                     }
                     // Glass surface follows the theme (frosted white → black text
                     // in light, white text in dark); opaque card keeps theme tokens.
                     val miniTitleColor = if (isGlass) {
                         if (LocalIsDarkTheme.current) Color.White else Color.Black
-                    } else MaterialTheme.colorScheme.onPrimaryContainer
+                    } else MaterialTheme.colorScheme.onSurface
                     val miniArtistColor = if (isGlass) {
                         if (LocalIsDarkTheme.current) Color.White.copy(alpha = 0.7f)
                         else Color.Black.copy(alpha = 0.7f)
-                    } else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                    Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                    } else MaterialTheme.colorScheme.onSurfaceVariant
+                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                         Text(
                             track.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp),
+                            fontWeight = FontWeight.SemiBold,
                             color = miniTitleColor,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
                             track.artist,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall,
                             color = miniArtistColor,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -1028,57 +1031,28 @@ private fun MiniPlayer(
                     // share the link). Accent-filled while a Jam is live.
                     IconButton(
                         onClick = onJam,
-                        modifier = Modifier
-                            .padding(end = 8.dp)
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (jamLive) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
-                                else Color.Transparent,
-                            ),
+                        modifier = Modifier.size(44.dp),
                     ) {
                         Icon(
                             Icons.Filled.Groups,
                             if (jamLive) "Jam en directo" else "Empezar Jam",
-                            tint = if (jamLive) MaterialTheme.colorScheme.primary else miniTitleColor.copy(alpha = 0.85f),
+                            tint = if (jamLive) MaterialTheme.colorScheme.primary else miniArtistColor,
                             modifier = Modifier.size(22.dp),
                         )
                     }
-                    // Inner controls sit plain on the glass card (no nested glass).
-                    Surface(
-                        onClick = onToggle,
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(48.dp),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            if (state.isBuffering) {
-                                ExpressiveInlineLoadingIndicator(
-                                    size = 24.dp,
-                                    color = androidx.compose.material3.LocalContentColor.current,
-                                    strokeWidth = 2.5.dp,
-                                )
-                            } else {
-                                AnimatedPlayPauseIcon(state.isPlaying, Modifier.size(27.dp))
+                    // Plain play/pause, like the mockup; swiping the bar left still skips.
+                    IconButton(onClick = onToggle, modifier = Modifier.size(44.dp)) {
+                        if (state.isBuffering) {
+                            ExpressiveInlineLoadingIndicator(
+                                size = 22.dp,
+                                color = miniTitleColor,
+                                strokeWidth = 2.5.dp,
+                            )
+                        } else {
+                            CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides miniTitleColor) {
+                                AnimatedPlayPauseIcon(state.isPlaying, Modifier.size(28.dp))
                             }
                         }
-                    }
-                    IconButton(
-                        onClick = onNext,
-                        enabled = state.queueSize > 1,
-                        modifier = Modifier
-                            .padding(start = 8.dp)
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.secondaryContainer),
-                    ) {
-                        Icon(
-                            Icons.Filled.SkipNext,
-                            "Next",
-                            tint = if (state.queueSize > 1) MaterialTheme.colorScheme.onSecondaryContainer
-                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                        )
                     }
                 }
                 MiniPlayerProgress(progressState)
@@ -1647,6 +1621,9 @@ private fun AddToPlaylistDialog(
 
 private enum class SeekDirection { REWIND, FORWARD }
 
+/** The old blurred artwork background and glow. Off: the Dial design is flat black. */
+private const val ARTWORK_BACKGROUND_ENABLED = false
+
 @Composable
 private fun FullPlayer(
     state: MusicPlayerState,
@@ -1676,7 +1653,16 @@ private fun FullPlayer(
     val track = state.current ?: return
     var showLyricsOffsetDialog by remember { mutableStateOf(false) }
     val isCanvasActive = canvasEnabled && canvas != null
-    val showFullBleed = canvasFullBleedEnabled
+    // Design "Dial": a square cover on flat black, never the full-bleed hero.
+    val showFullBleed = false
+    val radioReasons by player.radioReasons.collectAsStateWithLifecycle()
+    val radioTuning by player.radioTuning.collectAsStateWithLifecycle()
+    val jamViewModel: com.spotiaisexs.app.ui.connect.ConnectViewModel = hiltViewModel()
+    val jamState by jamViewModel.jam.collectAsStateWithLifecycle()
+    var showJamSheet by remember { mutableStateOf(false) }
+    if (showJamSheet) {
+        com.spotiaisexs.app.ui.connect.JamQuickSheet(onDismiss = { showJamSheet = false })
+    }
     val showSleeveCanvas = isCanvasActive && !showFullBleed
     val activeCanvas = remember(canvas, showFullBleed) {
         val tall = canvas?.tallUrl
@@ -1826,7 +1812,10 @@ private fun FullPlayer(
             val bgMaxDimension = maxOf(bgWidth, bgHeight, 1f)
             var heroBottomPx by remember { mutableFloatStateOf(0f) }
 
-            Box(Modifier.matchParentSize().liquidGlassSource(if (fullGlass) playerBackdrop else null)) {
+            Box(Modifier.matchParentSize().background(Color.Black)) {
+                // The blurred, artwork-tinted background of the old design stays in the code
+                // but is never composed: the Dial player is flat black.
+                if (ARTWORK_BACKGROUND_ENABLED) {
                 FluidArtworkBackground(
                     track = track,
                     modifier = Modifier.fillMaxSize(),
@@ -2125,6 +2114,7 @@ private fun FullPlayer(
                             )
                     )
                 }
+                }
             }
             Column(
                 Modifier
@@ -2174,14 +2164,13 @@ private fun FullPlayer(
                     ) {
                         Text(
                             when (currentTab) {
-                                FullPlayerTab.NOW_PLAYING -> "NOW PLAYING"
-                                FullPlayerTab.LYRICS -> "LYRICS"
-                                FullPlayerTab.QUEUE -> "PLAYING QUEUE"
+                                FullPlayerTab.NOW_PLAYING -> "Sonando de"
+                                FullPlayerTab.LYRICS -> "Letra"
+                                FullPlayerTab.QUEUE -> "Lo que viene"
                             },
                             style = MaterialTheme.typography.labelMedium,
-                            color = Color.White.copy(alpha = 0.95f),
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.9.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Normal,
                         )
                         Text(
                             if (currentTab == FullPlayerTab.LYRICS) {
@@ -2189,8 +2178,8 @@ private fun FullPlayer(
                             } else {
                                 state.sourceLabel.takeIf { it.isNotBlank() } ?: "SpotiAisexs"
                             },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.70f),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -2449,7 +2438,8 @@ private fun FullPlayer(
                                                     .size(artworkSize + 28.dp)
                                                     .graphicsLayer {
                                                         translationX = shownArtworkX * 0.7f
-                                                        alpha = glowAlpha * sleeveAlpha
+                                                        // No coloured glow behind the cover in the flat design.
+                                                        alpha = if (ARTWORK_BACKGROUND_ENABLED) glowAlpha * sleeveAlpha else 0f
                                                     }
                                                     .background(
                                                         Brush.radialGradient(
@@ -2471,10 +2461,10 @@ private fun FullPlayer(
                                             )
 
                                             Surface(
-                                                shape = RoundedCornerShape(32.dp),
+                                                shape = RoundedCornerShape(8.dp),
                                                 color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.88f * sleeveAlpha),
-                                                tonalElevation = 6.dp * sleeveAlpha,
-                                                shadowElevation = if (state.isPlaying) 28.dp * sleeveAlpha else 12.dp * sleeveAlpha,
+                                                tonalElevation = 0.dp,
+                                                shadowElevation = 0.dp,
                                                 modifier = Modifier
                                                     .size(artworkSize)
                                                     .graphicsLayer {
@@ -2489,7 +2479,7 @@ private fun FullPlayer(
                                                     PlayerArtwork(
                                                         track = track,
                                                         modifier = Modifier.fillMaxSize(),
-                                                        corner = 32.dp,
+                                                        corner = 8.dp,
                                                         canvas = if (showSleeveCanvas) canvas else null,
                                                         isPlaying = state.isPlaying,
                                                         pausedForTransition = shownDismissY > 0f || currentTab != FullPlayerTab.NOW_PLAYING,
@@ -2604,11 +2594,8 @@ private fun FullPlayer(
                                         Column(Modifier.weight(1f)) {
                                             Text(
                                                 track.title,
-                                                style = MaterialTheme.typography.headlineSmall.copy(
-                                                    letterSpacing = (-0.35).sp,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                ),
-                                                color = Color.White,
+                                                style = com.spotiaisexs.app.ui.theme.heroTitle(40),
+                                                color = MaterialTheme.colorScheme.onSurface,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                                 modifier = Modifier
@@ -2672,15 +2659,11 @@ private fun FullPlayer(
                                                 onClick = onToggleLiked,
                                                 interactionSource = likeInteraction,
                                                 shape = CircleShape,
-                                                color = liquidGlassContainerColor(if (isLiked) {
-                                                    Color.White.copy(alpha = 0.92f)
-                                                } else {
-                                                    Color.White.copy(alpha = 0.14f)
-                                                }),
+                                                color = Color.Transparent,
                                                 contentColor = if (isLiked) {
-                                                    Color(0xFFE91E63)
+                                                    MaterialTheme.colorScheme.primary
                                                 } else {
-                                                    Color.White.copy(alpha = 0.85f)
+                                                    MaterialTheme.colorScheme.onSurface
                                                 },
                                                 tonalElevation = 0.dp,
                                                 shadowElevation = 0.dp,
@@ -2699,40 +2682,18 @@ private fun FullPlayer(
                                                     )
                                                 }
                                             }
-                                            val lyricsInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                                            val isLyricsPressed by lyricsInteraction.collectIsPressedAsState()
-                                            val lyricsScale by animateFloatAsState(
-                                                targetValue = if (isLyricsPressed) 0.82f else 1.0f,
-                                                animationSpec = ExpressiveMotion.spatialSpring(),
-                                                label = "lyricsScale",
-                                            )
-                                            LiquidGlassSurface(
-                                                glassModifier = Modifier.liquidGlassChrome(CircleShape, LocalLiquidGlass.current, LiquidGlassPreset.PlayerControls, interactionSource = lyricsInteraction),
-                                                onClick = { onTabChange(FullPlayerTab.LYRICS) },
-                                                interactionSource = lyricsInteraction,
-                                                shape = CircleShape,
-                                                color = liquidGlassContainerColor(Color.White.copy(alpha = 0.14f)),
-                                                contentColor = Color.White.copy(alpha = 0.90f),
-                                                tonalElevation = 0.dp,
-                                                shadowElevation = 0.dp,
-                                                modifier = Modifier
-                                                    .size(46.dp)
-                                                    .graphicsLayer {
-                                                        scaleX = lyricsScale
-                                                        scaleY = lyricsScale
-                                                    },
-                                            ) {
-                                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                    Icon(
-                                                        Icons.Filled.FormatQuote,
-                                                        contentDescription = "Show lyrics",
-                                                        modifier = Modifier.size(24.dp),
-                                                    )
-                                                }
-                                            }
                                         }
                                     }
-                                    Spacer(Modifier.height(14.dp))
+                                    if (state.isEndlessQueue) {
+                                        val reason = radioReasons[player.radioKeyOf(track)]
+                                        Spacer(Modifier.height(10.dp))
+                                        com.spotiaisexs.app.ui.radio.RadioReasonStrip(
+                                            because = reason?.because ?: "la elegiste tú; de aquí sale la radio",
+                                            onMore = player::moreLikeCurrent,
+                                            onLess = player::lessLikeCurrent,
+                                        )
+                                    }
+                                    Spacer(Modifier.height(12.dp))
                                     SeekBar(
                                         progressState = progressState,
                                         isPlaying = state.isPlaying,
@@ -2741,15 +2702,29 @@ private fun FullPlayer(
                                         onSeek = player::seekTo,
                                         isTranslucent = LocalLiquidGlass.current,
                                         fallbackDurationMs = track.durationMs ?: state.durationMs,
-                                        primaryColor = ambientColor,
-                                        secondaryColor = ambientCompanion,
-                                        tertiaryColor = ambientDeep,
+                                        primaryColor = MaterialTheme.colorScheme.onSurface,
+                                        secondaryColor = MaterialTheme.colorScheme.onSurface,
+                                        tertiaryColor = MaterialTheme.colorScheme.onSurface,
                                     )
-                                    Spacer(Modifier.height(14.dp))
-                                    MainControls(state, player, isTranslucent = true)
+                                    Spacer(Modifier.height(10.dp))
+                                    MainControls(state, player, isTranslucent = false)
+                                    if (state.isEndlessQueue) {
+                                        Spacer(Modifier.height(4.dp))
+                                        com.spotiaisexs.app.ui.radio.RadioDial(
+                                            distance = radioTuning.distance,
+                                            onDistanceChange = player::setRadioDistance,
+                                        )
                                     }
-                                    Spacer(Modifier.height(24.dp))
-                                    PlayerUtilityControls(state, player, isTranslucent = true)
+                                    }
+                                    Spacer(Modifier.height(10.dp))
+                                    PlayerUtilityControls(state, player, isTranslucent = false)
+                                    Spacer(Modifier.height(10.dp))
+                                    com.spotiaisexs.app.ui.radio.PlayerQuickActions(
+                                        onJam = { showJamSheet = true },
+                                        onLyrics = { onTabChange(FullPlayerTab.LYRICS) },
+                                        onQueue = { onTabChange(FullPlayerTab.QUEUE) },
+                                        jamLive = jamState?.open == true,
+                                    )
                                 }
                         }
                     }
@@ -3155,7 +3130,7 @@ private fun MainControls(state: MusicPlayerState, player: MusicPlayer, isTranslu
             // Fallback matches the sibling prev/next buttons (14% white veil,
             // never solid white): on the full player's dark scrim the white
             // icon stays readable with or without refraction.
-            color = liquidGlassContainerColor(if (isTranslucent) Color.White.copy(alpha = 0.14f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)),
+            color = liquidGlassContainerColor(if (isTranslucent) Color.White.copy(alpha = 0.14f) else MaterialTheme.colorScheme.primary),
             contentColor = if (isPillGlassActive) {
                 if (isTranslucent) Color.White else MaterialTheme.colorScheme.primary
             } else if (isTranslucent) Color.White.copy(alpha = 0.94f) else MaterialTheme.colorScheme.onPrimary,
@@ -3431,6 +3406,8 @@ private fun PlayerUtilityControls(state: MusicPlayerState, player: MusicPlayer, 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun QueuePanel(state: MusicPlayerState, player: MusicPlayer, modifier: Modifier = Modifier) {
+    val radioReasons by player.radioReasons.collectAsStateWithLifecycle()
+    val radioTuning by player.radioTuning.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -3485,16 +3462,15 @@ private fun QueuePanel(state: MusicPlayerState, player: MusicPlayer, modifier: M
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    "Up next",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
+                    "Lo que viene",
+                    style = com.spotiaisexs.app.ui.theme.heroTitle(34),
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
                     if (state.isEndlessQueue) {
-                        "Unlimited songs · ${state.currentIndex.coerceAtLeast(0) + 1} playing"
+                        "Radio sin fin, suena la ${state.currentIndex.coerceAtLeast(0) + 1}"
                     } else {
-                        "${state.queue.size} songs · ${state.currentIndex.coerceAtLeast(0) + 1} playing"
+                        "${state.queue.size} canciones, suena la ${state.currentIndex.coerceAtLeast(0) + 1}"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.70f),
@@ -3586,6 +3562,54 @@ private fun QueuePanel(state: MusicPlayerState, player: MusicPlayer, modifier: M
             }
             Spacer(Modifier.height(6.dp))
         }
+        if (state.isEndlessQueue) {
+            // The dial and its switches: moving them re-plans what the radio had lined up.
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "¿Cuánto me alejo?",
+                            style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            radioTuning.label,
+                            fontFamily = com.spotiaisexs.app.ui.theme.BarlowCondensed,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 22.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    com.spotiaisexs.app.ui.radio.RadioDial(
+                        distance = radioTuning.distance,
+                        onDistanceChange = player::setRadioDistance,
+                        tall = true,
+                        scaleLabels = listOf("Mismo artista", "Vecinos", "Tu gusto", "Sorpresa"),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        radioTuning.describe(state.current?.artist) + " Al moverlo, la cola se rehace.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                com.spotiaisexs.app.ui.radio.DialSwitchChip("Solo en español", radioTuning.onlySpanish, { player.updateRadioTuning { it.copy(onlySpanish = !it.onlySpanish) } })
+                com.spotiaisexs.app.ui.radio.DialSwitchChip("Sin lentas", radioTuning.noSlow, { player.updateRadioTuning { it.copy(noSlow = !it.noSlow) } })
+                com.spotiaisexs.app.ui.radio.DialSwitchChip("Sin repetir artista", radioTuning.noRepeatArtist, { player.updateRadioTuning { it.copy(noRepeatArtist = !it.noRepeatArtist) } })
+                com.spotiaisexs.app.ui.radio.DialSwitchChip("Solo de esta década", radioTuning.thisDecade, { player.updateRadioTuning { it.copy(thisDecade = !it.thisDecade) } })
+            }
+            Spacer(Modifier.height(10.dp))
+        }
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -3627,9 +3651,9 @@ private fun QueuePanel(state: MusicPlayerState, player: MusicPlayer, modifier: M
                     },
                     content = {
                 LiquidGlassSurface(
-                    glassModifier = Modifier.liquidGlassChrome(RoundedCornerShape(20.dp), LocalLiquidGlass.current),
+                    glassModifier = Modifier.liquidGlassChrome(RoundedCornerShape(8.dp), LocalLiquidGlass.current),
                     onClick = { player.seekToQueueItem(index) },
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(8.dp),
                     color = if (isCurrent) {
                         if (LocalLiquidGlass.current) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
                         else MaterialTheme.colorScheme.primaryContainer
@@ -3663,7 +3687,7 @@ private fun QueuePanel(state: MusicPlayerState, player: MusicPlayer, modifier: M
                             textAlign = TextAlign.Center,
                             modifier = Modifier.width(30.dp),
                         )
-                        PlayerArtwork(item, Modifier.size(50.dp), 13.dp)
+                        PlayerArtwork(item, Modifier.size(44.dp), 4.dp)
                         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                             Text(
                                 item.title,
@@ -3681,10 +3705,18 @@ private fun QueuePanel(state: MusicPlayerState, player: MusicPlayer, modifier: M
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+                        if (index > state.currentIndex) {
+                            radioReasons[player.radioKeyOf(item)]?.let { reason ->
+                                com.spotiaisexs.app.ui.radio.RadioReasonTag(
+                                    reason,
+                                    Modifier.padding(end = 8.dp).widthIn(max = 132.dp),
+                                )
+                            }
+                        }
                         if (isCurrent) {
                             Icon(
                                 Icons.Filled.GraphicEq,
-                                "Currently playing",
+                                "Sonando ahora",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(22.dp),
                             )

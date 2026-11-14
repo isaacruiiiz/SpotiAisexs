@@ -177,6 +177,39 @@ class SearchViewModel @Inject constructor(
         }
     }
 
+    /** "+" or swipe on a song: it goes to the end of the queue, what plays now is untouched. */
+    fun queueResult(item: SearchResultItem) {
+        musicPlayer.addToQueue(
+            PlayableTrack(
+                title = item.name,
+                artist = item.artist.orEmpty(),
+                album = item.subtitle,
+                artworkUrl = item.artworkUrl,
+                videoId = item.videoId,
+            ),
+        )
+    }
+
+    /** "Emisora" on an artist: one of their songs starts and the radio stays close to them. */
+    fun playArtistStation(item: SearchResultItem) {
+        viewModelScope.launch {
+            val tracks = runCatching { repository.songsFor(item) }.getOrDefault(emptyList())
+            val seed = tracks.take(10).randomOrNull() ?: return@launch
+            musicPlayer.play(
+                PlayableTrack(
+                    title = seed.title,
+                    artist = seed.artist.takeUnless { it == "Unknown artist" } ?: item.name,
+                    album = seed.album,
+                    artworkUrl = seed.artworkUrl ?: item.artworkUrl,
+                    videoId = seed.videoId,
+                    durationMs = seed.durationSeconds?.takeIf { it > 0 }?.times(1_000L),
+                ),
+                sourceLabel = "Emisora de ${item.name}",
+                startRadio = true,
+            )
+        }
+    }
+
     private suspend fun runSearch(query: String, saveToHistory: Boolean) {
         val tab = _uiState.value.tab
         lastIssuedQuery = query

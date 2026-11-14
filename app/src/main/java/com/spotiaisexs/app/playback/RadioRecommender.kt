@@ -43,7 +43,18 @@ internal data class RadioSignals(
     /** Lowercased artists of the queue tail, oldest first — used for spacing and fatigue. */
     val recentQueueArtists: List<String> = emptyList(),
     val style: RadioStyle = RadioStyle.EXPLORE,
+    /** The dial and its switches; decides how far the batch wanders and its block mix. */
+    val tuning: RadioTuning = RadioTuning(distance = if (style == RadioStyle.FOCUSED) RadioTuning.CLOSE else RadioTuning.WIDE),
+    /** What this session taught us, per artist token (negative = skipped early, positive = liked). */
+    val sessionArtistScores: Map<String, Double> = emptyMap(),
+    /** Artist tokens of the song the radio grows from. */
+    val seedArtistTokens: Set<String> = emptySet(),
 )
+
+/** A queued radio song together with why it was chosen. */
+internal data class RadioPick(val track: PlayableTrack, val reason: RadioReason)
+
+private enum class RadioBucket { FAMILIAR, REDISCOVERY, FRESH }
 
 /**
  * Spotify-style radio selection. The previous implementation took YouTube's
@@ -124,6 +135,136 @@ internal object RadioRecommender {
         return spaceArtists(picked, signals.recentQueueArtists)
     }
 
+    /** A song counts as "forgotten" when it was played for real and not for this long. */
+    const val REDISCOVERY_AFTER_MS = 60L * 24 * 60 * 60 * 1000
+    const val SOURCE_LIBRARY = "spotify-library"
+    const val SOURCE_KNOWN = "known"
+    const val SOURCE_REDISCOVER = "rediscover"
+
+    private fun bucketOf(candidate: RadioCandidate, signals: RadioSignals): RadioBucket {
+        val history = signals.history[historyKey(candidate.track.title, candidate.track.artist)]
+        val forgotten = history != null && history.playCount >= 2 && history.skipCount <= history.playCount &&
+            signals.nowMillis - history.lastPlayedAtMillis > REDISCOVERY_AFTER_MS
+        return when {
+            forgotten || SOURCE_REDISCOVER in candidate.sources -> RadioBucket.REDISCOVERY
+            history != null || SOURCE_LIBRARY in candidate.sources || SOURCE_KNOWN in candidate.sources -> RadioBucket.FAMILIAR
+            else -> RadioBucket.FRESH
+        }
+    }
+
+    /** Spreads the three kinds over five slots so the same kind is not bunched up. */
+    internal fun slotPattern(mix: BlockMix): List<String> {
+        val counts = linkedMapOf(
+            RadioBucket.FAMILIAR.name to mix.familiar.coerceAtLeast(0),
+            RadioBucket.FRESH.name to mix.fresh.coerceAtLeast(0),
+            RadioBucket.REDISCOVERY.name to mix.rediscovery.coerceAtLeast(0),
+        )
+        if (counts.values.sum() == 0) counts[RadioBucket.FAMILIAR.name] = 5
+        val out = mutableListOf<String>()
+        var last: String? = null
+        while (counts.values.sum() > 0) {
+            val open = counts.entries.filter { it.value > 0 }.sortedByDescending { it.value }
+            val pick = open.firstOrNull { it.key != last } ?: open.first()
+            out += pick.key
+            counts[pick.key] = pick.value - 1
+            last = pick.key
+        }
+        return out
+    }
+
+    /**
+     * Builds the batch in blocks of five following the dial's [BlockMix]
+     * (say three familiar, one forgotten, one new) instead of drawing at
+     * random. Inside each kind the songs are still sampled (Gumbel over the
+     * scores), artists are kept apart, and every pick carries its reason.
+     * When a kind runs dry its slots fall back to the best song left.
+     */
+    fun selectBlocks(
+        candidates: List<RadioCandidate>,
+        signals: RadioSignals,
+        batchSize: Int,
+        seedTitle: String?,
+        random: Random = Random.Default,
+    ): List<RadioPick> {
+        if (candidates.isEmpty() || batchSize <= 0) return emptyList()
+        val tuning = signals.tuning
+
+        val fresh = candidates.filterNot { isInHardCooldown(it, signals) || isChronicSkip(it, signals) }
+        // Never let the queue starve: if almost everything was heard yesterday,
+        // fall back to the full pool and let the soft penalties sort it out.
+        val pool = if (fresh.size >= batchSize / 2) fresh else candidates.filterNot { isChronicSkip(it, signals) }
+        if (pool.isEmpty()) return emptyList()
+
+        val ranked = pool
+            .map { it to (score(it, signals) / TEMPERATURE + gumbel(random)) }
+            .sortedByDescending { it.second }
+            .map { it.first }
+        val buckets = ranked.groupBy { bucketOf(it, signals) }
+
+        val pattern = slotPattern(tuning.mix).map { RadioBucket.valueOf(it) }
+        val artistCap = when {
+            tuning.sameArtist -> Int.MAX_VALUE
+            tuning.noRepeatArtist -> ARTIST_CAP_PER_BATCH
+            else -> ARTIST_CAP_PER_BATCH * 2
+        }
+        val spacing = when {
+            tuning.sameArtist -> 0
+            tuning.noRepeatArtist -> ARTIST_SPACING + 1
+            else -> 2
+        }
+        val window = ArrayDeque(signals.recentQueueArtists.takeLast(spacing))
+        val artistCounts = mutableMapOf<String, Int>()
+        val taken = HashSet<String>()
+        val out = mutableListOf<RadioPick>()
+
+        fun take(bucket: RadioBucket, respectSpacing: Boolean): RadioCandidate? =
+            buckets[bucket].orEmpty().firstOrNull { candidate ->
+                val artist = candidate.track.artist.trim().lowercase()
+                historyKey(candidate.track.title, candidate.track.artist) !in taken &&
+                    artistCounts.getOrDefault(artist, 0) < artistCap &&
+                    (!respectSpacing || artist !in window)
+            }
+
+        var slot = 0
+        while (out.size < batchSize) {
+            val want = pattern[slot % pattern.size]
+            slot++
+            val order = when (want) {
+                RadioBucket.FAMILIAR -> listOf(RadioBucket.FAMILIAR, RadioBucket.FRESH, RadioBucket.REDISCOVERY)
+                RadioBucket.FRESH -> listOf(RadioBucket.FRESH, RadioBucket.FAMILIAR, RadioBucket.REDISCOVERY)
+                RadioBucket.REDISCOVERY -> listOf(RadioBucket.REDISCOVERY, RadioBucket.FAMILIAR, RadioBucket.FRESH)
+            }
+            var chosen: RadioCandidate? = null
+            var chosenBucket = want
+            search@ for (respectSpacing in listOf(true, false)) {
+                for (bucket in order) {
+                    val candidate = take(bucket, respectSpacing) ?: continue
+                    chosen = candidate
+                    chosenBucket = bucket
+                    break@search
+                }
+            }
+            val pick = chosen ?: break
+            val artist = pick.track.artist.trim().lowercase()
+            taken += historyKey(pick.track.title, pick.track.artist)
+            artistCounts[artist] = artistCounts.getOrDefault(artist, 0) + 1
+            if (spacing > 0) {
+                window.addLast(artist)
+                while (window.size > spacing) window.removeFirst()
+            }
+            val sameArtist = artistTokens(pick.track.artist).any { it in signals.seedArtistTokens }
+            val kind = when {
+                chosenBucket == RadioBucket.REDISCOVERY -> RadioReasonKind.REDISCOVERY
+                chosenBucket == RadioBucket.FAMILIAR -> RadioReasonKind.LIBRARY
+                want == RadioBucket.FRESH -> RadioReasonKind.NEW
+                sameArtist -> RadioReasonKind.SAME_ARTIST
+                else -> RadioReasonKind.NEIGHBOUR
+            }
+            out += RadioPick(pick.track, RadioReason(kind, seedTitle))
+        }
+        return out
+    }
+
     internal fun score(candidate: RadioCandidate, signals: RadioSignals): Double {
         val artist = candidate.track.artist.trim().lowercase()
         var score = 0.0
@@ -134,14 +275,24 @@ internal object RadioRecommender {
             2 -> 1.7
             else -> 2.2
         }
-        val focused = signals.style == RadioStyle.FOCUSED
+        val focused = signals.tuning.focused
         // Focused radios trust YouTube's order much more: the top of a song's
         // related list is its real neighbourhood, the tail is where it drifts.
         score += if (focused) 2.0 / (1.0 + candidate.bestRank / 6.0) else 1.0 / (1.0 + candidate.bestRank / 8.0)
 
-        // Taste: drives an exploring radio, only breaks ties in a focused one.
-        if (artist in signals.spotifyArtists) score += if (focused) 0.2 else 0.6
-        if (artist in signals.heavyRotationArtists) score += if (focused) 0.1 else 0.2
+        // Taste: the further the dial, the more it weighs. Close to the seed it only breaks ties.
+        val far = (signals.tuning.distance / 100.0).coerceIn(0.0, 1.0)
+        if (artist in signals.spotifyArtists) score += 0.15 + 0.6 * far
+        if (artist in signals.heavyRotationArtists) score += 0.1 + 0.15 * far
+
+        // Same-artist end of the dial: the picked artist comes first.
+        val tokens = artistTokens(candidate.track.artist)
+        if (signals.tuning.sameArtist && tokens.any { it in signals.seedArtistTokens }) score += 1.5
+
+        // What this session taught us: early skips sink an artist, full listens lift it.
+        if (signals.sessionArtistScores.isNotEmpty()) {
+            score += tokens.sumOf { signals.sessionArtistScores[it] ?: 0.0 }.coerceIn(-3.0, 3.0)
+        }
 
         // Freshness and skips.
         val history = signals.history[historyKey(candidate.track.title, candidate.track.artist)]

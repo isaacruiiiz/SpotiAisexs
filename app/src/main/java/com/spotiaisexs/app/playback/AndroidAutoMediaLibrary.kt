@@ -137,6 +137,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
 
     suspend fun playMediaId(mediaId: String, player: MusicPlayer): Boolean = when {
         mediaId == ACTION_RADIO -> playInfiniteRadio(player)
+        mediaId.startsWith(STATION_PREFIX) -> playStation(RadioStation.byId(mediaId.removePrefix(STATION_PREFIX)), player)
         mediaId == ACTION_JAM_START -> startJam()
         mediaId == ACTION_JAM_END -> runCatching { connectSync.get().endJam() }.isSuccess
         mediaId == ACTION_JAM_QR -> true
@@ -242,18 +243,24 @@ class AndroidAutoMediaLibrary @Inject constructor(
         ),
     )
 
-    /** Inicio: "Para ti", "Escuchado hace poco" and "Tus playlists", like the app's home. */
+    /** Inicio: "Emisoras", "Para ti", "Escuchado hace poco" and "Tus playlists", like the app's home. */
     private suspend fun homeItems(): List<MediaBrowserCompat.MediaItem> {
         val forYou = buildList {
-            add(
-                actionItem(
-                    mediaId = ACTION_RADIO,
-                    title = "Radio infinita",
-                    subtitle = "Canciones nuevas según tus gustos",
-                    iconUri = drawableUri(com.spotiaisexs.app.R.drawable.ic_auto_radio),
-                    group = "Para ti",
-                ),
-            )
+            // The app's stations, "Coche" first: it is the one made for driving.
+            val stations = listOf(RadioStation.COCHE) + RadioStation.entries.filter {
+                it != RadioStation.COCHE && it != RadioStation.ME_GUSTA
+            }
+            stations.forEach { station ->
+                add(
+                    actionItem(
+                        mediaId = STATION_PREFIX + station.id,
+                        title = station.title,
+                        subtitle = station.subtitle,
+                        iconUri = drawableUri(com.spotiaisexs.app.R.drawable.ic_auto_radio),
+                        group = "Emisoras",
+                    ),
+                )
+            }
             runCatching { playlistRepository.getLikedSongs() }.getOrNull()
                 ?.takeIf { it.tracks.isNotEmpty() }
                 ?.let { liked ->
@@ -363,14 +370,21 @@ class AndroidAutoMediaLibrary @Inject constructor(
         return runCatching { sync.startJam(name) }.isSuccess
     }
 
-    private suspend fun playInfiniteRadio(player: MusicPlayer): Boolean {
-        val liked = runCatching { playlistRepository.getLikedSongs()?.tracks }.getOrNull().orEmpty()
-        val recent = runCatching { songPlayStats.get().recentlyPlayed(30) }.getOrDefault(emptyList())
-            .map { PlayableTrack(title = it.title, artist = it.artist, artworkUrl = it.artworkUrl, videoId = it.videoId) }
-        val seed = liked.map { it.toPlayableTrack() }.ifEmpty { recent }.randomOrNull()
-            ?: player.state.value.current
-            ?: return false
-        player.play(seed, sourceLabel = "Infinite Radio", startRadio = true, radioStyle = RadioStyle.EXPLORE)
+    /**
+     * In the car the default radio is the "Coche" station: songs the user
+     * already knows, with energy, and next to nothing new to judge while driving.
+     */
+    private suspend fun playInfiniteRadio(player: MusicPlayer): Boolean = playStation(RadioStation.COCHE, player)
+
+    private suspend fun playStation(station: RadioStation?, player: MusicPlayer): Boolean {
+        station ?: return false
+        if (station == RadioStation.ME_GUSTA) {
+            val liked = runCatching { playlistRepository.getLikedSongs()?.tracks }.getOrNull().orEmpty()
+            if (liked.isEmpty()) return false
+            player.playQueue(liked.map { it.toPlayableTrack() }.shuffled(), 0, station.sourceLabel)
+            return true
+        }
+        player.playStation(station)
         return true
     }
 
@@ -575,6 +589,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private const val MAX_SEARCH_RESULTS = 30
         private const val RECENT_PREFIX = "recent:"
         private const val ACTION_RADIO = "action:radio"
+        private const val STATION_PREFIX = "station:"
         private const val ACTION_JAM_START = "action:jam:start"
         private const val ACTION_JAM_END = "action:jam:end"
         private const val ACTION_JAM_QR = "action:jam:qr"

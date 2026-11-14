@@ -59,6 +59,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -251,6 +254,14 @@ fun SearchScreen(
                     selectedTab = state.tab,
                     onTabSelected = viewModel::setTab,
                 )
+                if (state.tab == SearchTab.TRACKS) {
+                    Text(
+                        "Toca una canción y sigue con parecidas. Deslízala a la derecha para mandarla a la cola.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    )
+                }
             }
         }
 
@@ -496,6 +507,12 @@ fun SearchScreen(
                                                     SearchTab.PLAYLISTS, SearchTab.USERS -> null
                                                 }
                                             },
+                                            onQueue = if (state.tab == SearchTab.TRACKS) {
+                                                { viewModel.queueResult(item) }
+                                            } else null,
+                                            onStation = if (state.tab == SearchTab.ARTISTS) {
+                                                { viewModel.playArtistStation(item) }
+                                            } else null,
                                         )
                                     }
                                 }
@@ -805,8 +822,22 @@ private fun SearchResultRow(
     onLongClick: () -> Unit,
     onMenu: () -> Unit,
     modifier: Modifier = Modifier,
+    onQueue: (() -> Unit)? = null,
+    onStation: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    // Spotify-style swipe: drag a song to the right and it goes to the queue.
+    val queueAction by androidx.compose.runtime.rememberUpdatedState<(() -> Unit)?>(
+        onQueue?.let { action ->
+            {
+                action()
+                android.widget.Toast.makeText(context, "Añadida a la cola", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        },
+    )
+    val queueThreshold = with(androidx.compose.ui.platform.LocalDensity.current) { 84.dp.toPx() }
+    var swipeX by remember(item.videoId, item.name) { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val shownSwipeX by androidx.compose.animation.core.animateFloatAsState(swipeX, label = "queueSwipe")
     fun openLastFm(path: String) {
         val base = item.url.ifBlank { "https://www.last.fm/user/${item.name}" }.trimEnd('/')
         try {
@@ -817,9 +848,45 @@ private fun SearchResultRow(
         } catch (e: Exception) { }
     }
 
+    Box(modifier.fillMaxWidth()) {
+    if (onQueue != null && shownSwipeX > 1f) {
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(MaterialTheme.colorScheme.primary)
+                .padding(start = 20.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Text(
+                "A la cola",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+    }
     Row(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
+            .graphicsLayer { translationX = shownSwipeX }
+            .background(MaterialTheme.colorScheme.background)
+            .then(
+                if (onQueue != null) {
+                    Modifier.pointerInput(item.videoId, item.name) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                if (swipeX >= queueThreshold) queueAction?.invoke()
+                                swipeX = 0f
+                            },
+                            onDragCancel = { swipeX = 0f },
+                        ) { change, amount ->
+                            change.consume()
+                            swipeX = (swipeX + amount).coerceIn(0f, queueThreshold * 1.4f)
+                        }
+                    }
+                } else {
+                    Modifier
+                },
+            )
             .combinedClickable(
                 enabled = tab != SearchTab.USERS,
                 onClick = onClick,
@@ -877,8 +944,21 @@ private fun SearchResultRow(
                 Icon(Icons.Filled.PersonRemove, contentDescription = "Unfollow ${item.name} on Last.fm")
             }
         } else if (tab != SearchTab.PLAYLISTS) {
+            if (onStation != null) {
+                com.spotiaisexs.app.ui.radio.DialOutlinedButton("Emisora", onStation, accent = true)
+            }
+            if (onQueue != null) {
+                IconButton(onClick = { queueAction?.invoke() }) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = "Añadir ${item.name} a la cola",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             com.spotiaisexs.app.ui.common.OverflowMenuButton(onClick = onMenu)
         }
+    }
     }
 }
 
@@ -889,11 +969,11 @@ private fun SearchFilterPills(
     modifier: Modifier = Modifier,
 ) {
     val tabs = listOf(
-        SearchTab.TRACKS to "Tracks",
-        SearchTab.ARTISTS to "Artists",
-        SearchTab.ALBUMS to "Albums",
+        SearchTab.TRACKS to "Canciones",
+        SearchTab.ARTISTS to "Artistas",
+        SearchTab.ALBUMS to "Álbumes",
         SearchTab.PLAYLISTS to "Playlists",
-        SearchTab.USERS to "Users",
+        SearchTab.USERS to "Usuarios",
     )
     Row(
         modifier = modifier

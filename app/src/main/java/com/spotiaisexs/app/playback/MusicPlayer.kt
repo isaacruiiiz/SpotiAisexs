@@ -204,6 +204,7 @@ class MusicPlayer @Inject constructor(
     private val exclusiveUsbOutput: ExclusiveUsbOutput,
     private val songPlayStatsRepository: dagger.Lazy<com.spotiaisexs.app.data.repository.SongPlayStatsRepository>,
     private val spotifySyncManager: dagger.Lazy<com.spotiaisexs.app.data.spotify.SpotifySyncManager>,
+    private val radioMetadata: dagger.Lazy<RadioMetadata>,
 ) {
     private val appContext = context.applicationContext
     private val streamResolutionWakeLock by lazy {
@@ -304,7 +305,29 @@ class MusicPlayer @Inject constructor(
     private var radioQueueLoadJob: Job? = null
     private var radioQueueActive = false
     private val radioUsedSeeds = ConcurrentHashMap.newKeySet<String>()
-    @Volatile private var radioStyle = RadioStyle.FOCUSED
+    private val radioTuningPrefs by lazy { appContext.getSharedPreferences("radio_tuning", Context.MODE_PRIVATE) }
+    private val _radioTuning = MutableStateFlow(loadRadioSwitches())
+    /** The dial and switches of the running radio. */
+    val radioTuning: StateFlow<RadioTuning> = _radioTuning.asStateFlow()
+    private val _radioReasons = MutableStateFlow<Map<String, RadioReason>>(emptyMap())
+    /** Why each radio song was queued, keyed by [radioKeyOf]. */
+    val radioReasons: StateFlow<Map<String, RadioReason>> = _radioReasons.asStateFlow()
+    private val radioSession = RadioSession()
+    private var radioRebuildJob: Job? = null
+    /** Skips right after the user picks something else say nothing about the skipped song. */
+    @Volatile private var radioLearningMutedUntil = 0L
+    /** Kept for callers that still think in two styles; the dial is the real state. */
+    private var radioStyle: RadioStyle
+        get() = if (_radioTuning.value.focused) RadioStyle.FOCUSED else RadioStyle.EXPLORE
+        set(value) {
+            // A new radio starts at its own spot of the dial; the switches stay as the user left them.
+            _radioTuning.update {
+                it.copy(
+                    distance = if (value == RadioStyle.EXPLORE) RadioTuning.WIDE else RadioTuning.CLOSE,
+                    station = null,
+                )
+            }
+        }
     /** Artist tokens around the song the user picked; a focused radio never leaves them for long. */
     private val radioNeighbourhood = ConcurrentHashMap.newKeySet<String>()
     /** Everything this radio session already suggested — never suggested twice, even if removed from the queue. */
@@ -535,6 +558,13 @@ class MusicPlayer @Inject constructor(
         } else 1.0
         val completedNaturally = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO || playedRatio >= 0.85
         val wasSkip = !completedNaturally
+        if (radioQueueActive && android.os.SystemClock.elapsedRealtime() > radioLearningMutedUntil) {
+            when {
+                completedNaturally -> radioSession.onCompleted(previousTrack.artist)
+                previousPositionMs < RadioSession.EARLY_SKIP_MS -> onRadioEarlySkip(previousTrack)
+                else -> radioSession.onLateSkip(previousTrack.artist)
+            }
+        }
         applicationScope.launch(Dispatchers.IO) {
             val repo = songPlayStatsRepository.get()
             repo.recordListenedMs(
@@ -1589,7 +1619,11 @@ class MusicPlayer @Inject constructor(
         sourceLabel: String = "SpotiAisexs",
         startRadio: Boolean = true,
         radioStyle: RadioStyle = RadioStyle.FOCUSED,
+        station: RadioStation? = null,
     ) {
+        radioLearningMutedUntil = android.os.SystemClock.elapsedRealtime() + RADIO_LEARNING_MUTE_MS
+        // Picking an artist by hand forgives whatever the radio held against it.
+        if (station == null) radioSession.forgive(track.artist) else radioSession.resetSkipStreak()
         pendingRestoredSession = null
         disableDiscoverQueue()
         disableRadioQueue()
@@ -1601,6 +1635,8 @@ class MusicPlayer @Inject constructor(
         lastPreloadRetryMs = 0L
         radioQueueActive = startRadio
         this.radioStyle = radioStyle
+        if (station != null) _radioTuning.update { it.copy(distance = station.distance, station = station) }
+        _radioReasons.value = emptyMap()
         startResolvedQueuePlayback(
             tracks = listOf(track),
             selectedIndex = 0,
@@ -1623,6 +1659,7 @@ class MusicPlayer @Inject constructor(
         sourceLabel: String = "SpotiAisexs",
         startShuffled: Boolean = false,
     ) {
+        radioLearningMutedUntil = android.os.SystemClock.elapsedRealtime() + RADIO_LEARNING_MUTE_MS
         disableRadioQueue()
         playQueueInternal(tracks, startIndex, endlessDiscover = false, sourceLabel = sourceLabel, startShuffled = startShuffled)
     }
@@ -4023,7 +4060,9 @@ class MusicPlayer @Inject constructor(
         queueTailArtists: List<String> = emptyList(),
         style: RadioStyle = radioStyle,
     ): List<PlayableTrack> = coroutineScope {
-        val focused = style == RadioStyle.FOCUSED
+        val tuning = _radioTuning.value
+        val focused = tuning.focused
+        val seedTokens = RadioRecommender.artistTokens(primarySeed.artist)
         val candidateById = LinkedHashMap<String, YouTubeMusicTrack>()
         val sourcesById = mutableMapOf<String, MutableSet<String>>()
         val bestRankById = mutableMapOf<String, Int>()
@@ -4072,7 +4111,28 @@ class MusicPlayer @Inject constructor(
             .take(if (focused) 1 else 2)
 
         // The tail of a related list is where YouTube drifts; a focused radio stops earlier.
-        val primaryLimit = if (focused) FOCUSED_RELATED_LIMIT else batchSize
+        val primaryLimit = when {
+            tuning.sameArtist -> SAME_ARTIST_RELATED_LIMIT
+            focused -> FOCUSED_RELATED_LIMIT
+            else -> batchSize
+        }
+        // Second opinion, in parallel: Last.fm's "similar tracks" (only when the user added a key).
+        // YouTube's related lists drift towards whatever is popular; Last.fm follows listeners.
+        val lastFmJob = async {
+            withTimeoutOrNull(RADIO_LASTFM_BUDGET_MS) {
+                val similar = radioMetadata.get().similarTracks(primarySeed.title, primarySeed.artist, if (focused) 8 else 12)
+                similar.map { (title, artist) ->
+                    async { runCatching { innerTube.findBestMatchOrNull(title, artist, prefetchStreams = false) }.getOrNull() }
+                }.mapNotNull { it.await() }
+            }.orEmpty()
+        }
+        // Same-artist end of the dial: more of the picked artist.
+        val sameArtistJob = async {
+            if (!tuning.sameArtist || primarySeed.artist.isBlank()) emptyList()
+            else runCatching { innerTube.searchSongs(primarySeed.artist, limit = 25, prefetchStreams = false) }
+                .getOrDefault(emptyList())
+                .filter { found -> RadioRecommender.artistTokens(found.artist).any { it in seedTokens } }
+        }
         val seedJobs = buildList {
             primarySeedVideoId?.let { id -> add("seed:$id" to async { related(id, primaryLimit) }) }
             extraSeedIds.forEach { id -> add("seed:$id" to async { related(id, if (focused) 15 else 25) }) }
@@ -4092,6 +4152,8 @@ class MusicPlayer @Inject constructor(
             radioNeighbourhood += RadioRecommender.artistTokens(primarySeed.artist)
             primaryTop.forEach { id -> candidateById[id]?.let { radioNeighbourhood += RadioRecommender.artistTokens(it.artist) } }
         }
+        addCandidates("lastfm", lastFmJob.await(), rankOffset = 3)
+        addCandidates("artist", sameArtistJob.await(), rankOffset = 2)
 
         // 2. Spotify library anchor: songs the user saved on Spotify whose artist is
         //    already in this neighbourhood join the pool directly, and one of them
@@ -4165,6 +4227,31 @@ class MusicPlayer @Inject constructor(
             }
         }
 
+        // 5. Songs the user played for real and then forgot fill the "hace meses" slot of every
+        //    block; a "Coche" radio also draws straight from what the user already knows.
+        val nowMs = System.currentTimeMillis()
+        val yearStats = runCatching { statsRepo?.mostPlayedSince(365, 250) }.getOrNull().orEmpty()
+        fun com.spotiaisexs.app.data.local.db.SongPlayStatsEntity.asCandidate() = YouTubeMusicTrack(
+            videoId = videoId.orEmpty(),
+            title = title,
+            artist = artist,
+            artworkUrl = artworkUrl,
+        )
+        if (tuning.mix.rediscovery > 0) {
+            val forgotten = yearStats.filter { song ->
+                song.playCount >= 2 && song.skipCount <= song.playCount && !song.videoId.isNullOrBlank() &&
+                    nowMs - song.lastPlayedAtMillis > RadioRecommender.REDISCOVERY_AFTER_MS &&
+                    (!focused || inNeighbourhood(song.artist))
+            }.shuffled().take(if (tuning.station == RadioStation.REDESCUBRIR) 40 else 8)
+            addCandidates(RadioRecommender.SOURCE_REDISCOVER, forgotten.map { it.asCandidate() }, rankOffset = 5)
+        }
+        if (tuning.knownOnly) {
+            val known = yearStats.filter { song ->
+                song.playCount >= 3 && song.skipCount <= song.playCount && !song.videoId.isNullOrBlank()
+            }.shuffled().take(50)
+            addCandidates(RadioRecommender.SOURCE_KNOWN, known.map { it.asCandidate() }, rankOffset = 4)
+        }
+
         if (candidateById.isEmpty()) return@coroutineScope emptyList()
 
         // ── Hard filters ──
@@ -4194,6 +4281,7 @@ class MusicPlayer @Inject constructor(
             val generatedKey = GeneratedTrack(name = title, artist = artist).key
 
             if (videoId == primarySeedVideoId) continue
+            if (radioSession.isBlocked(artist)) continue
             if (videoId in knownVideoIds || trackKey in seenKeys) continue
             if (trackKey in radioSuggestedKeys) continue
             if (generatedKey !in allowedKeys && trackKey !in allowedKeys) continue
@@ -4230,45 +4318,326 @@ class MusicPlayer @Inject constructor(
         }
         if (eligible.isEmpty()) return@coroutineScope emptyList()
 
-        // ── Focused: stay in the neighbourhood ──
+        val history = runCatching {
+            statsRepo?.statsFor(eligible.map { it.track.title to it.track.artist })
+                ?.mapValues { (_, s) -> RadioTrackHistory(s.playCount, s.skipCount, s.lastPlayedAtMillis) }
+        }.getOrNull().orEmpty()
+        fun played(c: RadioCandidate) = history[RadioRecommender.historyKey(c.track.title, c.track.artist)] != null
+        fun fromLibrary(c: RadioCandidate) =
+            RadioRecommender.SOURCE_LIBRARY in c.sources || RadioRecommender.SOURCE_KNOWN in c.sources
+
+        // ── How far from the picked song ──
         // Keep a candidate if its artist belongs to the neighbourhood, several seeds agree
         // on it, or it sits near the top of the picked song's own related list.
-        val pool = if (focused && radioNeighbourhood.isNotEmpty()) {
-            val near = eligible.filter { c ->
+        val near = if (focused && radioNeighbourhood.isNotEmpty()) {
+            val close = eligible.filter { c ->
                 inNeighbourhood(c.track.artist) ||
                     c.sources.size >= 2 ||
                     (primarySource != null && primarySource in c.sources && c.bestRank < NEIGHBOURHOOD_TOP_RANK)
             }
             // Better a shorter batch (the queue refills itself) than an off-vibe one.
-            near.ifEmpty { eligible.filter { primarySource != null && primarySource in it.sources }.take(batchSize / 3) }
+            close.ifEmpty { eligible.filter { primarySource != null && primarySource in it.sources }.take(batchSize / 3) }
         } else {
             eligible
         }
+        val byDistance = if (tuning.sameArtist) {
+            near.filter { c ->
+                RadioRecommender.artistTokens(c.track.artist).any { it in seedTokens } ||
+                    (primarySource != null && primarySource in c.sources && c.bestRank < SAME_ARTIST_TOP_RANK)
+            }.ifEmpty { near }
+        } else {
+            near
+        }
+        // ── Station rules ──
+        val byStation = when {
+            tuning.station == RadioStation.DESCUBRIR -> byDistance.filter { !played(it) && !fromLibrary(it) }.ifEmpty { byDistance }
+            tuning.knownOnly -> byDistance.filter { played(it) || fromLibrary(it) }.ifEmpty { byDistance }
+            else -> byDistance
+        }
+        // ── Switches (language, tempo, decade) ──
+        val pool = applyRadioSwitches(byStation, tuning, yearStats)
         if (pool.isEmpty()) return@coroutineScope emptyList()
 
-        // ── Score, sample, space ──
-        val history = runCatching {
-            statsRepo?.statsFor(pool.map { it.track.title to it.track.artist })
-                ?.mapValues { (_, s) -> RadioTrackHistory(s.playCount, s.skipCount, s.lastPlayedAtMillis) }
-        }.getOrNull().orEmpty()
+        // ── Score, sample, build the blocks of five ──
         val heavyRotation = runCatching {
             statsRepo?.mostPlayedSince(14, 25)?.mapTo(mutableSetOf()) { it.artist.trim().lowercase() }
         }.getOrNull().orEmpty()
 
-        val picked = RadioRecommender.select(
+        val picks = RadioRecommender.selectBlocks(
             candidates = pool,
             signals = RadioSignals(
-                nowMillis = System.currentTimeMillis(),
+                nowMillis = nowMs,
                 history = history,
                 spotifyArtists = spotifyArtists,
                 heavyRotationArtists = heavyRotation,
                 recentQueueArtists = queueTailArtists.map { it.trim().lowercase() },
                 style = style,
+                tuning = tuning,
+                sessionArtistScores = radioSession.snapshot(),
+                seedArtistTokens = seedTokens,
             ),
             batchSize = batchSize,
+            seedTitle = primarySeed.title,
         )
-        picked.forEach { radioSuggestedKeys.add(it.queueKey()) }
-        picked
+        picks.forEach { radioSuggestedKeys.add(it.track.queueKey()) }
+        _radioReasons.update { known -> known + picks.associate { it.track.queueKey() to it.reason } }
+        picks.map { it.track }
+    }
+
+    /**
+     * The radio switches. Each one only removes songs there is evidence against
+     * (or, for the decade, no evidence for) and gives up rather than leave the
+     * radio without songs: a filter that empties the queue helps nobody.
+     */
+    private suspend fun applyRadioSwitches(
+        pool: List<RadioCandidate>,
+        tuning: RadioTuning,
+        yearStats: List<com.spotiaisexs.app.data.local.db.SongPlayStatsEntity>,
+    ): List<RadioCandidate> = coroutineScope {
+        val tempo = tuning.wantsEnergy || tuning.calm
+        if (pool.isEmpty() || (!tuning.onlySpanish && !tempo && !tuning.thisDecade)) return@coroutineScope pool
+        val meta = radioMetadata.get()
+        fun mainArtist(artist: String) =
+            artist.split(",", "&", " feat", " ft", " x ", " y ").first().trim().lowercase()
+
+        val factsJob = async {
+            if (tempo || tuning.thisDecade) {
+                meta.factsFor(pool.map { it.track.title to it.track.artist }, RADIO_FACTS_BUDGET_MS)
+            } else emptyMap()
+        }
+        val tagsJob = async {
+            if (tuning.onlySpanish || tempo) {
+                meta.artistTagsFor(pool.map { mainArtist(it.track.artist) }, RADIO_TAGS_BUDGET_MS)
+            } else emptyMap()
+        }
+        val facts = factsJob.await()
+        val tags = tagsJob.await()
+        fun tagsOf(c: RadioCandidate) = tags[mainArtist(c.track.artist)].orEmpty()
+        fun factsOf(c: RadioCandidate) = facts[RadioRecommender.historyKey(c.track.title, c.track.artist)]
+
+        var out = pool
+        fun narrow(strict: List<RadioCandidate>, loose: List<RadioCandidate>) {
+            out = when {
+                strict.size >= RADIO_FILTER_MIN_POOL -> strict
+                loose.size >= RADIO_FILTER_MIN_POOL -> loose
+                strict.isNotEmpty() -> strict
+                else -> out
+            }
+        }
+
+        if (tuning.onlySpanish) {
+            // What each artist's titles look like, in this pool and in the user's own history.
+            val artistLanguage = HashMap<String, Int>()
+            pool.forEach { c -> artistLanguage.merge(mainArtist(c.track.artist), RadioFilters.titleLanguage(c.track.title), Int::plus) }
+            yearStats.forEach { song -> artistLanguage.merge(mainArtist(song.artist), RadioFilters.titleLanguage(song.title), Int::plus) }
+            fun verdict(c: RadioCandidate): Int {
+                val own = RadioFilters.titleLanguage(c.track.title)
+                return when {
+                    RadioFilters.tagsSaySpanish(tagsOf(c)) -> if (own <= -2) -1 else 1
+                    own != 0 -> own
+                    else -> artistLanguage[mainArtist(c.track.artist)] ?: 0
+                }
+            }
+            narrow(strict = out.filter { verdict(it) > 0 }, loose = out.filter { verdict(it) >= 0 })
+        }
+        if (tuning.thisDecade) {
+            val decade = RadioFilters.currentDecadeStart(java.util.Calendar.getInstance().get(java.util.Calendar.YEAR))
+            narrow(
+                strict = out.filter { c -> factsOf(c)?.year?.let { it >= decade } == true },
+                loose = out.filter { c -> factsOf(c)?.year?.let { it >= decade } != false },
+            )
+        }
+        if (tuning.wantsEnergy) {
+            val kept = out.filter { c -> RadioFilters.tempoEvidence(c.track.title, tagsOf(c), factsOf(c)?.bpm) < 2 }
+            narrow(strict = kept, loose = kept)
+        }
+        if (tuning.calm) {
+            narrow(
+                strict = out.filter { c -> RadioFilters.tempoEvidence(c.track.title, tagsOf(c), factsOf(c)?.bpm) > 0 },
+                loose = out.filter { c -> RadioFilters.tempoEvidence(c.track.title, tagsOf(c), factsOf(c)?.bpm) >= 0 },
+            )
+        }
+        out
+    }
+
+    // ── Dial, switches, "más así / menos así", stations ────────────────────
+
+    private fun loadRadioSwitches(): RadioTuning = RadioTuning(
+        onlySpanish = radioTuningPrefs.getBoolean("only_spanish", false),
+        noSlow = radioTuningPrefs.getBoolean("no_slow", false),
+        noRepeatArtist = radioTuningPrefs.getBoolean("no_repeat_artist", true),
+        thisDecade = radioTuningPrefs.getBoolean("this_decade", false),
+    )
+
+    private fun persistRadioSwitches(tuning: RadioTuning) {
+        radioTuningPrefs.edit()
+            .putBoolean("only_spanish", tuning.onlySpanish)
+            .putBoolean("no_slow", tuning.noSlow)
+            .putBoolean("no_repeat_artist", tuning.noRepeatArtist)
+            .putBoolean("this_decade", tuning.thisDecade)
+            .apply()
+    }
+
+    /** Key under which [radioReasons] stores the reason of a queued song. */
+    fun radioKeyOf(track: PlayableTrack): String = track.queueKey()
+
+    /** True while a radio is feeding the queue (the dial only makes sense then). */
+    val isRadioActive: Boolean get() = radioQueueActive
+
+    /**
+     * Moves the dial or flips a switch. The songs the radio had lined up are
+     * dropped and planned again with the new settings (after a short pause,
+     * so dragging the dial does not fire a request per pixel).
+     */
+    fun updateRadioTuning(transform: (RadioTuning) -> RadioTuning) {
+        val before = _radioTuning.value
+        val after = transform(before).let { it.copy(distance = it.distance.coerceIn(0, 100)) }
+        if (after == before) return
+        _radioTuning.value = after
+        persistRadioSwitches(after)
+        radioRebuildJob?.cancel()
+        radioRebuildJob = applicationScope.launch {
+            delay(RADIO_REBUILD_DEBOUNCE_MS)
+            rebuildRadioQueue()
+        }
+    }
+
+    fun setRadioDistance(distance: Int) = updateRadioTuning { tuning ->
+        // "Tu mezcla" has no rule besides its mix, so the dial takes over; the other stations keep theirs.
+        tuning.copy(distance = distance, station = tuning.station?.takeIf { it != RadioStation.TU_MEZCLA })
+    }
+
+    /** Removes radio-suggested songs still waiting in the queue. Main thread only. */
+    private fun removeUpcomingRadioTracks(predicate: (PlayableTrack) -> Boolean): List<String> {
+        if (isCasting || !playerDelegate.isInitialized()) return emptyList()
+        val removed = mutableListOf<String>()
+        val current = player.currentMediaItemIndex
+        for (index in player.mediaItemCount - 1 downTo current + 1) {
+            val track = player.getMediaItemAt(index).toPlayableTrack()
+            val key = track.queueKey()
+            if (key in radioSuggestedKeys && predicate(track)) {
+                player.removeMediaItem(index)
+                removed += key
+            }
+        }
+        if (removed.isNotEmpty()) refresh(player)
+        return removed
+    }
+
+    /** Throws away what the radio had lined up and plans it again with the current dial. */
+    fun rebuildRadioQueue() = onMain {
+        if (!radioQueueActive || isCasting || !playerDelegate.isInitialized()) return@onMain
+        cancelCrossfade()
+        radioQueueLoadJob?.cancel()
+        radioQueueLoadJob = null
+        val dropped = removeUpcomingRadioTracks { true }.toSet()
+        // They may come back if they still fit the new settings.
+        radioSuggestedKeys.removeAll(dropped)
+        _radioReasons.update { it - dropped }
+        player.currentMediaItem?.toPlayableTrack()?.videoId?.let { radioUsedSeeds.remove(it) }
+        extendRadioQueueIfNeeded(player.currentMediaItemIndex, forceIfAtEnd = true)
+    }
+
+    private fun onRadioEarlySkip(track: PlayableTrack) {
+        val nowBlocked = radioSession.onEarlySkip(track.artist)
+        val tokens = RadioRecommender.artistTokens(track.artist)
+        // The transition that reported this skip is still in progress: touch the queue afterwards.
+        applicationScope.launch(Dispatchers.Main) {
+            if (!radioQueueActive) return@launch
+            if (nowBlocked) {
+                val dropped = removeUpcomingRadioTracks { queued ->
+                    RadioRecommender.artistTokens(queued.artist).any { it in tokens }
+                }.toSet()
+                _radioReasons.update { it - dropped }
+            }
+            if (radioSession.consecutiveEarlySkips >= RADIO_SKIPS_TO_REBUILD) {
+                radioSession.resetSkipStreak()
+                rebuildRadioQueue()
+            }
+        }
+    }
+
+    /** "Más así": this artist goes up and the queue is planned again around the current song. */
+    fun moreLikeCurrent() = onMain {
+        val track = _state.value.current ?: return@onMain
+        radioSession.more(track.artist)
+        if (!radioQueueActive) return@onMain
+        radioNeighbourhood += RadioRecommender.artistTokens(track.artist)
+        rebuildRadioQueue()
+    }
+
+    /** "Menos así": this artist is out for the session, its queued songs go and the next one plays. */
+    fun lessLikeCurrent() = onMain {
+        val track = _state.value.current ?: return@onMain
+        radioSession.less(track.artist)
+        val tokens = RadioRecommender.artistTokens(track.artist)
+        radioNeighbourhood.removeAll(tokens)
+        if (radioQueueActive) {
+            val dropped = removeUpcomingRadioTracks { queued ->
+                RadioRecommender.artistTokens(queued.artist).any { it in tokens }
+            }.toSet()
+            _radioReasons.update { it - dropped }
+        }
+        radioLearningMutedUntil = android.os.SystemClock.elapsedRealtime() + RADIO_LEARNING_MUTE_MS
+        applicationScope.launch(Dispatchers.IO) {
+            runCatching { songPlayStatsRepository.get().recordSkip(track.title, track.artist, track.videoId) }
+        }
+        next()
+    }
+
+    /** Starts one of the home screen radios. "Me gusta" is a plain shuffle and is started by the caller. */
+    fun playStation(station: RadioStation) {
+        applicationScope.launch(Dispatchers.IO) {
+            val seed = pickStationSeed(station)
+            withContext(Dispatchers.Main) {
+                if (seed == null) {
+                    _state.update { it.copy(error = "Escucha antes algunas canciones para que esta emisora sepa qué te gusta") }
+                } else {
+                    play(
+                        track = seed,
+                        sourceLabel = station.sourceLabel,
+                        startRadio = true,
+                        radioStyle = RadioStyle.EXPLORE,
+                        station = station,
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun pickStationSeed(station: RadioStation): PlayableTrack? {
+        val now = System.currentTimeMillis()
+        val day = 24L * 60 * 60 * 1000
+        val top = runCatching { songPlayStatsRepository.get().mostPlayedSince(365, 250) }.getOrDefault(emptyList())
+            .filter { it.title.isNotBlank() && it.skipCount <= it.playCount && !radioSession.isBlocked(it.artist) }
+        val meta = radioMetadata.get()
+        val pool = when (station) {
+            RadioStation.REDESCUBRIR -> top.filter {
+                it.playCount >= 2 && now - it.lastPlayedAtMillis > RadioRecommender.REDISCOVERY_AFTER_MS
+            }
+            RadioStation.COCHE -> top.filter { it.playCount >= 3 && now - it.lastPlayedAtMillis > 2 * day }.take(60)
+            RadioStation.TRANQUILO -> {
+                // Tempo is only known for songs looked up before; warm a few more for next time.
+                val candidates = top.take(40)
+                runCatching { meta.factsFor(candidates.map { it.title to it.artist }, RADIO_STATION_FACTS_BUDGET_MS) }
+                candidates.filter { RadioFilters.tempoEvidence(it.title, emptySet(), meta.cachedFacts(it.title, it.artist)?.bpm) > 0 }
+            }
+            else -> top.filter { now - it.lastPlayedAtMillis > day }.take(80)
+        }.ifEmpty { top }
+        pool.shuffled().firstOrNull()?.let { song ->
+            return PlayableTrack(title = song.title, artist = song.artist, artworkUrl = song.artworkUrl, videoId = song.videoId)
+        }
+        // No listening history yet: start from the synced Spotify library.
+        val library = runCatching { spotifySyncManager.get().tasteSeeds(limit = 200) }.getOrDefault(emptyList())
+        return library.shuffled().firstOrNull()?.let { track ->
+            PlayableTrack(
+                title = track.name,
+                artist = track.artist,
+                album = track.album,
+                artworkUrl = track.artworkUrl,
+                videoId = track.youtubeVideoIdOrNull(),
+            )
+        }
     }
 
     private fun startRadioQueue(
@@ -6487,6 +6856,16 @@ class MusicPlayer @Inject constructor(
         const val DISCOVER_QUEUE_BATCH_SIZE = 16
         const val DISCOVER_QUEUE_REFILL_THRESHOLD = 8
         const val RADIO_QUEUE_BATCH_SIZE = 35
+        const val SAME_ARTIST_RELATED_LIMIT = 15
+        const val SAME_ARTIST_TOP_RANK = 6
+        const val RADIO_LASTFM_BUDGET_MS = 4_000L
+        const val RADIO_FACTS_BUDGET_MS = 6_000L
+        const val RADIO_TAGS_BUDGET_MS = 4_000L
+        const val RADIO_STATION_FACTS_BUDGET_MS = 2_500L
+        const val RADIO_FILTER_MIN_POOL = 6
+        const val RADIO_REBUILD_DEBOUNCE_MS = 700L
+        const val RADIO_SKIPS_TO_REBUILD = 2
+        const val RADIO_LEARNING_MUTE_MS = 2_500L
         /** A focused radio reads only this much of a song's related list. */
         const val FOCUSED_RELATED_LIMIT = 25
         /** Artists ranked above this in the picked song's related list form its neighbourhood. */

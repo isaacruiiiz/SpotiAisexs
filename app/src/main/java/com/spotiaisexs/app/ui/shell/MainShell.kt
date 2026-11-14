@@ -57,6 +57,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.semantics.Role
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -153,18 +159,22 @@ class MainShellViewModel @Inject constructor(
     }
 }
 
+// Pager order: the two the bottom bar shows, then the statistics page, which is
+// reached from the home header (and by swiping past the library).
 private enum class MainTab(val labelRes: Int) {
     FEED(com.spotiaisexs.app.R.string.nav_feed),
-    STATS(com.spotiaisexs.app.R.string.nav_stats),
     PLAYLISTS(com.spotiaisexs.app.R.string.nav_playlists),
+    STATS(com.spotiaisexs.app.R.string.nav_stats),
 }
+
+private val DialNavHeight = 58.dp
 
 /** Shared with any screen hosted inside [MainShell] so their scrolling
  *  lists know how much bottom content padding to reserve — the nav
  *  overlays content (it's not a Scaffold bottomBar reserving space), so
  *  each screen leaves this much room for its last item to clear it. */
 object FloatingNavDefaults {
-    val ContentBottomPadding = 92.dp
+    val ContentBottomPadding = 66.dp
 
     /**
      * Full bottom clearance for edge-to-edge scrolling content: the floating
@@ -243,17 +253,11 @@ fun MainShell(
                 onBack = { scope.launch { pagerState.animateScrollToPage(feedIndex) } },
             ) {
                 when (tabs[page]) {
-                    MainTab.FEED -> FeedScreen(
+                    MainTab.FEED -> com.spotiaisexs.app.ui.radio.RadioHomeScreen(
                         onOpenSettings = onOpenSettings,
                         onOpenSearch = onOpenSearch,
-                        onOpenDiscover = onOpenDiscover,
-                        onOpenPlaylist = onOpenPlaylist,
+                        onOpenStats = { scope.launch { pagerState.animateScrollToPage(tabs.indexOf(MainTab.STATS)) } },
                         onOpenFeedPlaylist = onOpenFeedPlaylist,
-                        onOpenGenerator = onOpenGenerator,
-                        onOpenFriends = onOpenFriends,
-                        onOpenFriendProfile = onOpenFriendProfile,
-                        onOpenNewReleases = onOpenNewReleases,
-                        onOpenDownloads = onOpenDownloads,
                     )
                     MainTab.STATS -> HomeScreen(
                         onOpenSettings = onOpenSettings,
@@ -295,16 +299,39 @@ fun MainShell(
                 .zIndex(9f),
         )
 
-        FloatingNavBar(
-            backdrop = navigationBackdrop,
-            tabs = tabs,
-            selectedIndex = selectedTabIndex,
-            onSelect = { index ->
-                if (index != selectedTabIndex) selectedTabIndex = index
-                scope.launch { pagerState.animateScrollToPage(index) }
-            },
-            onOpenGenerator = onOpenGenerator,
-            onOpenSearch = onOpenSearch,
+        fun goTo(tab: MainTab) {
+            val index = tabs.indexOf(tab)
+            if (index != selectedTabIndex) selectedTabIndex = index
+            scope.launch { pagerState.animateScrollToPage(index) }
+        }
+        // The playlist generator used to live in the old dock; in the library it
+        // stays one tap away as a small round button above the bars.
+        if (tabs[selectedTabIndex] == MainTab.PLAYLISTS) {
+            Surface(
+                onClick = onOpenGenerator,
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                    .padding(end = 16.dp, bottom = DialNavHeight + LocalMiniPlayerScrollClearance.current + 14.dp)
+                    .size(52.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.AutoAwesome,
+                        contentDescription = androidx.compose.ui.res.stringResource(com.spotiaisexs.app.R.string.nav_create_playlist),
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+        }
+        DialNavBar(
+            selected = if (tabs[selectedTabIndex] == MainTab.FEED) DialNavItem.RADIO else DialNavItem.LIBRARY,
+            onRadio = { goTo(MainTab.FEED) },
+            onSearch = onOpenSearch,
+            onLibrary = { goTo(MainTab.PLAYLISTS) },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -377,235 +404,69 @@ private fun UpdatePromptCard(
     }
 }
 
+/** Which of the three bottom items is lit. "Buscar" is a screen of its own, never selected here. */
+private enum class DialNavItem { RADIO, LIBRARY }
+
+/**
+ * Design "Dial": a flat bar with a hairline on top and three items (Radio,
+ * Buscar, Biblioteca). The active one is orange with a 2 dp marker above it.
+ */
 @Composable
-private fun FloatingNavBar(
-    backdrop: LayerBackdrop?,
-    tabs: List<MainTab>,
-    selectedIndex: Int,
-    onSelect: (Int) -> Unit,
-    onOpenGenerator: () -> Unit,
-    onOpenSearch: () -> Unit,
+private fun DialNavBar(
+    selected: DialNavItem,
+    onRadio: () -> Unit,
+    onSearch: () -> Unit,
+    onLibrary: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val liquidGlass = LocalLiquidGlass.current
-    val searchInteraction = remember { MutableInteractionSource() }
-    val glassHoverIndex = remember(liquidGlass) { mutableStateOf<Int?>(null) }
-    val glassNavBounds = remember { mutableStateMapOf<Int, Rect>() }
-    val dockInteraction = remember { MutableInteractionSource() }
-    val fabInteraction = remember { MutableInteractionSource() }
-    Box(
+    val hairline = MaterialTheme.colorScheme.outlineVariant
+    Surface(
+        color = MaterialTheme.colorScheme.background,
         modifier = modifier
-            .windowInsetsPadding(
-                WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
-            )
-            // Same side margin and max width as the mini player pill, so the
-            // nav and the pill line up edge to edge.
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        // No animateContentSize here: the dock pills already animate their own
-        // width and the FAB animates its enter/exit size. Animating this outer
-        // wrapper at the same time squeezes the Row mid-transition, clipping
-        // the dock to a narrow rectangle and pushing the FAB over the pill.
-        contentAlignment = Alignment.Center,
+            .fillMaxWidth()
+            .drawBehind { drawLine(hairline, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx()) },
     ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-            modifier = Modifier.widthIn(max = 680.dp).fillMaxWidth(),
+            Modifier
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                .fillMaxWidth()
+                .height(DialNavHeight),
         ) {
-            Surface(
-                shape = DockShape,
-                color = liquidGlassContainerColor(
-                    MaterialTheme.colorScheme.surfaceContainerHigh,
-                    enabled = liquidGlass,
-                    backdrop = backdrop,
-                ),
-                tonalElevation = if (liquidGlass) 0.dp else 6.dp,
-                shadowElevation = if (liquidGlass) 0.dp else 12.dp,
-                modifier = Modifier
-                    .weight(1f)
-                    .liquidGlassChrome(DockShape, liquidGlass, LiquidGlassPreset.BottomNavigation, backdrop, interactionSource = dockInteraction),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .then(
-                            if (liquidGlass) {
-                                Modifier.pointerInput(Unit) {
-                                    val bridge = 6.dp.toPx()
-                                    val hitIndex: (Offset) -> Int? = { pos ->
-                                        glassNavBounds.entries
-                                            .firstOrNull { it.value.inflate(bridge).contains(pos) }
-                                            ?.key
-                                    }
-                                    awaitEachGesture {
-                                        val down = awaitFirstDown(requireUnconsumed = false)
-                                        glassHoverIndex.value = hitIndex(down.position)
-                                        while (true) {
-                                            val event = awaitPointerEvent()
-                                            val change = event.changes.firstOrNull { it.id == down.id }
-                                            if (change == null || !change.pressed) {
-                                                glassHoverIndex.value = null
-                                                break
-                                            }
-                                            glassHoverIndex.value = hitIndex(change.position)
-                                        }
-                                    }
-                                }
-                            } else {
-                                Modifier
-                            },
-                        )
-                        .fillMaxWidth()
-                        .height(NavBarHeight)
-                        .padding(horizontal = 4.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    tabs.forEachIndexed { index, tab ->
-                        val onClick = remember(index) { { onSelect(index) } }
-                        FloatingNavItem(
-                            label = androidx.compose.ui.res.stringResource(tab.labelRes),
-                            icon = tab.icon(),
-                            selected = selectedIndex == index,
-                            onClick = onClick,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                }
-            }
-
-            // Satellite Companion Generator Button (only visible on Playlists tab).
-            // Size-affecting enter/exit run with clip = false so the circular
-            // FAB is never sliced into a rectangle mid-transition, and the
-            // dock Row is never squeezed — the FAB grows beside the dock
-            // instead of drawing over the selected pill.
-            AnimatedVisibility(
-                visible = selectedIndex == tabs.indexOf(MainTab.PLAYLISTS),
-                enter = fadeIn(animationSpec = tween(180)) +
-                    scaleIn(initialScale = 0.6f, animationSpec = navSpring()) +
-                    expandHorizontally(
-                        animationSpec = navSpring(),
-                        expandFrom = Alignment.End,
-                        clip = false,
-                    ),
-                exit = fadeOut(animationSpec = tween(120)) +
-                    scaleOut(targetScale = 0.6f, animationSpec = navSpring()) +
-                    shrinkHorizontally(
-                        animationSpec = navSpring(),
-                        shrinkTowards = Alignment.End,
-                        clip = false,
-                    ),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(Modifier.width(10.dp))
-                    Surface(
-                        shape = CircleShape,
-                        color = liquidGlassContainerColor(MaterialTheme.colorScheme.primaryContainer, backdrop = backdrop),
-                        shadowElevation = if (liquidGlass) 0.dp else 10.dp,
-                        tonalElevation = if (liquidGlass) 0.dp else 4.dp,
-                        modifier = Modifier
-                            .size(NavBarHeight)
-                            .liquidGlassChrome(CircleShape, liquidGlass, LiquidGlassPreset.FloatingControls, backdrop, interactionSource = fabInteraction)
-                            .clickable(interactionSource = fabInteraction, indication = null, onClick = onOpenGenerator),
-                    ) {
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                            Icon(
-                                imageVector = Icons.Filled.AutoAwesome,
-                                contentDescription = androidx.compose.ui.res.stringResource(com.spotiaisexs.app.R.string.nav_create_playlist),
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Search pinned on its own at the trailing end of the bar, in the
-            // same glass layer (iOS 26 tab bar pattern). On Playlists the
-            // generator button takes that slot so the dock fits narrow phones.
-            if (selectedIndex != tabs.indexOf(MainTab.PLAYLISTS)) {
-                Spacer(Modifier.width(10.dp))
-                Surface(
-                    shape = CircleShape,
-                    color = liquidGlassContainerColor(
-                        MaterialTheme.colorScheme.surfaceContainerHigh,
-                        enabled = liquidGlass,
-                        backdrop = backdrop,
-                    ),
-                    shadowElevation = if (liquidGlass) 0.dp else 12.dp,
-                    tonalElevation = if (liquidGlass) 0.dp else 6.dp,
-                    modifier = Modifier
-                        .size(NavBarHeight)
-                        .liquidGlassChrome(CircleShape, liquidGlass, LiquidGlassPreset.BottomNavigation, backdrop, interactionSource = searchInteraction)
-                        .clickable(interactionSource = searchInteraction, indication = null, onClick = onOpenSearch),
-                ) {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                        Icon(
-                            imageVector = Icons.Filled.Search,
-                            contentDescription = androidx.compose.ui.res.stringResource(com.spotiaisexs.app.R.string.nav_search),
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                }
-            }
+            DialNavButton("Radio", Icons.Filled.Sensors, selected == DialNavItem.RADIO, onRadio, Modifier.weight(1f))
+            DialNavButton("Buscar", Icons.Filled.Search, false, onSearch, Modifier.weight(1f))
+            DialNavButton("Biblioteca", Icons.Filled.LibraryMusic, selected == DialNavItem.LIBRARY, onLibrary, Modifier.weight(1f))
         }
     }
 }
 
 @Composable
-private fun FloatingNavItem(
+private fun DialNavButton(
     label: String,
     icon: ImageVector,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // The active tab is a solid pill in the artwork accent with dark ink;
-    // the others keep icon + label in a muted tone, all on one line.
-    val backgroundColor by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-        animationSpec = navSpring(),
-        label = "navItemBackground",
-    )
-    val contentColor by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-        animationSpec = navSpring(),
-        label = "navItemContent",
-    )
-    Surface(
-        onClick = onClick,
-        shape = PillShape,
-        color = backgroundColor,
-        modifier = modifier.height(NavItemHeight),
+    val accent = MaterialTheme.colorScheme.primary
+    val color = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .drawBehind {
+                if (selected) drawRect(accent, size = androidx.compose.ui.geometry.Size(size.width, 2.dp.toPx()))
+            }
+            .selectable(selected = selected, onClick = onClick, role = Role.Tab),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-            modifier = Modifier
-                .padding(horizontal = 8.dp)
-                .height(NavItemHeight),
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = contentColor,
-                modifier = Modifier.size(18.dp),
-            )
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                color = contentColor,
-                maxLines = 1,
-                softWrap = false,
-                modifier = Modifier.padding(start = 6.dp),
-            )
-        }
+        Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(3.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            color = color,
+            maxLines = 1,
+        )
     }
-}
-
-private fun MainTab.icon(): ImageVector = when (this) {
-    MainTab.FEED -> Icons.Filled.Home
-    MainTab.STATS -> Icons.Filled.Leaderboard
-    MainTab.PLAYLISTS -> Icons.AutoMirrored.Filled.QueueMusic
 }

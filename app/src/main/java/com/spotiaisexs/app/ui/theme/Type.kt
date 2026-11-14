@@ -1,54 +1,59 @@
-@file:OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
-
 package com.spotiaisexs.app.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.spotiaisexs.app.R
 
 /**
- * Geist (SIL OFL 1.1, docs/licenses/Geist-OFL.txt), bundled as a variable
- * font (res/font/geist.ttf, wght 100–900). Design "Cristal, color de
- * portada": large titles are Bold with tight tracking, section titles
- * SemiBold, body Regular and labels SemiBold — quiet type so the artwork
- * color carries the personality.
+ * Design "Dial": Barlow for everything you read, Barlow Condensed for section
+ * headers and Instrument Serif for the few big titles ("Tu mezcla", the song
+ * in the player). All three are SIL OFL 1.1 (docs/licenses).
  */
-private fun geist(weight: Int): FontFamily = FontFamily(
-    Font(
-        R.font.geist,
-        weight = when {
-            weight >= 700 -> FontWeight.Bold
-            weight >= 600 -> FontWeight.SemiBold
-            weight >= 500 -> FontWeight.Medium
-            else -> FontWeight.Normal
-        },
-        variationSettings = FontVariation.Settings(FontVariation.weight(weight)),
-    ),
+val Barlow = FontFamily(
+    Font(R.font.barlow_regular, FontWeight.Normal),
+    Font(R.font.barlow_medium, FontWeight.Medium),
+    Font(R.font.barlow_semibold, FontWeight.SemiBold),
+    Font(R.font.barlow_semibold, FontWeight.Bold),
+)
+
+val BarlowCondensed = FontFamily(
+    Font(R.font.barlow_condensed_semibold, FontWeight.SemiBold),
+    Font(R.font.barlow_condensed_bold, FontWeight.Bold),
+)
+
+val InstrumentSerif = FontFamily(Font(R.font.instrument_serif, FontWeight.Normal))
+
+/** Big serif title: "Tu mezcla", the song in the player, "Lo que viene". */
+fun heroTitle(size: Int) = TextStyle(
+    fontFamily = InstrumentSerif,
+    fontWeight = FontWeight.Normal,
+    fontSize = size.sp,
+    lineHeight = (size * 1.02f).sp,
+    letterSpacing = (-0.01f * size).sp,
 )
 
 val SpotiAisexsTypography = Typography(
-    displayLarge = TextStyle(fontFamily = geist(700), fontWeight = FontWeight.Bold, fontSize = 57.sp, lineHeight = 62.sp, letterSpacing = (-2.0).sp),
-    displayMedium = TextStyle(fontFamily = geist(700), fontWeight = FontWeight.Bold, fontSize = 45.sp, lineHeight = 50.sp, letterSpacing = (-1.6).sp),
-    displaySmall = TextStyle(fontFamily = geist(700), fontWeight = FontWeight.Bold, fontSize = 36.sp, lineHeight = 42.sp, letterSpacing = (-1.2).sp),
-    // Large titles ("Inicio", "Biblioteca").
-    headlineLarge = TextStyle(fontFamily = geist(700), fontWeight = FontWeight.Bold, fontSize = 34.sp, lineHeight = 40.sp, letterSpacing = (-1.0).sp),
-    headlineMedium = TextStyle(fontFamily = geist(700), fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 34.sp, letterSpacing = (-0.8).sp),
-    headlineSmall = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 24.sp, lineHeight = 30.sp, letterSpacing = (-0.5).sp),
-    // Section headers ("Escuchado hace poco").
-    titleLarge = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 26.sp, letterSpacing = (-0.4).sp),
-    titleMedium = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 22.sp, letterSpacing = (-0.1).sp),
-    titleSmall = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp),
-    bodyLarge = TextStyle(fontFamily = geist(400), fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 24.sp),
-    bodyMedium = TextStyle(fontFamily = geist(400), fontWeight = FontWeight.Normal, fontSize = 15.sp, lineHeight = 21.sp),
-    bodySmall = TextStyle(fontFamily = geist(400), fontWeight = FontWeight.Normal, fontSize = 13.sp, lineHeight = 17.sp),
-    labelLarge = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp),
-    labelMedium = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 12.sp, lineHeight = 16.sp),
-    labelSmall = TextStyle(fontFamily = geist(600), fontWeight = FontWeight.SemiBold, fontSize = 11.sp, lineHeight = 15.sp, letterSpacing = 0.1.sp),
+    displayLarge = heroTitle(57),
+    displayMedium = heroTitle(46),
+    displaySmall = heroTitle(38),
+    // Large titles ("Biblioteca", "Buscar").
+    headlineLarge = heroTitle(36),
+    headlineMedium = heroTitle(30),
+    headlineSmall = TextStyle(fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 30.sp),
+    // Section headers ("Emisoras", "Hace poco").
+    titleLarge = TextStyle(fontFamily = BarlowCondensed, fontWeight = FontWeight.SemiBold, fontSize = 22.sp, lineHeight = 26.sp),
+    titleMedium = TextStyle(fontFamily = Barlow, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 22.sp),
+    titleSmall = TextStyle(fontFamily = Barlow, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp),
+    bodyLarge = TextStyle(fontFamily = Barlow, fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontFamily = Barlow, fontWeight = FontWeight.Normal, fontSize = 15.sp, lineHeight = 21.sp),
+    bodySmall = TextStyle(fontFamily = Barlow, fontWeight = FontWeight.Normal, fontSize = 13.sp, lineHeight = 17.sp),
+    labelLarge = TextStyle(fontFamily = Barlow, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp),
+    labelMedium = TextStyle(fontFamily = Barlow, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, lineHeight = 16.sp),
+    labelSmall = TextStyle(fontFamily = Barlow, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 15.sp),
 )
 
 /**

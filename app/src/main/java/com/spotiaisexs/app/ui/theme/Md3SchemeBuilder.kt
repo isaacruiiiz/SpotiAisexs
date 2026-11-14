@@ -67,6 +67,44 @@ object Md3SchemeBuilder {
     }
 
     /**
+     * Design "Dial": pure black, flat neutral surfaces, warm off-white text and
+     * the accent exactly as given (the logo's orange) with dark ink on top. No
+     * tinted greys and no glass.
+     */
+    fun buildDialDarkScheme(hex: String): ColorScheme {
+        val accent = runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(Color(0xFFFF7A1A))
+        val ink = if (accent.luminance() > 0.3f) Color(0xFF1A0A00) else Color.White
+        return buildDarkScheme(hex, amoled = true).copy(
+            primary = accent,
+            onPrimary = ink,
+            primaryContainer = Color(0xFF3A1D08),
+            onPrimaryContainer = Color(0xFFFFD9BF),
+            secondary = Color(0xFFF2EFE9),
+            onSecondary = Color.Black,
+            secondaryContainer = Color(0xFF1F1F1F),
+            onSecondaryContainer = Color(0xFFF2EFE9),
+            tertiary = accent,
+            onTertiary = ink,
+            background = Color.Black,
+            onBackground = Color(0xFFF2EFE9),
+            surface = Color.Black,
+            onSurface = Color(0xFFF2EFE9),
+            surfaceVariant = Color(0xFF1A1A1A),
+            onSurfaceVariant = Color(0xFFA8A39B),
+            surfaceTint = Color.Transparent,
+            surfaceDim = Color.Black,
+            surfaceBright = Color(0xFF2A2A2A),
+            surfaceContainerLowest = Color.Black,
+            surfaceContainerLow = Color(0xFF0D0D0D),
+            surfaceContainer = Color(0xFF121212),
+            surfaceContainerHigh = Color(0xFF1A1A1A),
+            surfaceContainerHighest = Color(0xFF222222),
+            outline = Color(0xFF5A564F),
+            outlineVariant = Color(0xFF262626),
+        )
+    }
+
+    /**
      * Design "Cristal, color de portada": the accent is a light, saturated
      * tone of the artwork's hue (like #F6B6A0 for a peach cover) that reads
      * on pure black and on glass, with dark ink on top of it. Greys stay grey.

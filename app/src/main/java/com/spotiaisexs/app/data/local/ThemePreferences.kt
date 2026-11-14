@@ -43,10 +43,10 @@ data class ThemePrefs(
     val accentLight: String = DEFAULT_ACCENT_LIGHT,
     val accentMode: AccentMode = AccentMode.MANUAL,
     val amoled: Boolean = true,
-    val liquidGlass: Boolean = true,
+    val liquidGlass: Boolean = false,
 ) {
     companion object {
-        const val DEFAULT_ACCENT = "#FF7A45"
+        const val DEFAULT_ACCENT = "#FF7A1A"
         const val DEFAULT_ACCENT_LIGHT = "#E85F28"
     }
 }
@@ -73,7 +73,7 @@ class ThemePreferences @Inject constructor(
                 accentLight = p.readSafely(Keys.ACCENT_LIGHT) ?: ThemePrefs.DEFAULT_ACCENT_LIGHT,
                 accentMode = AccentMode.fromStorage(p.readSafely(Keys.ACCENT_MODE)),
                 amoled = p.readSafely(Keys.AMOLED) ?: true,
-                liquidGlass = p.readSafely(Keys.LIQUID_GLASS) ?: true,
+                liquidGlass = p.readSafely(Keys.LIQUID_GLASS) ?: false,
             )
         }
 

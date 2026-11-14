@@ -78,11 +78,11 @@ fun JamCard(viewModel: ConnectViewModel, defaultHostName: String) {
     val accent = MaterialTheme.colorScheme.primary
 
     Surface(
-        shape = RoundedCornerShape(26.dp),
+        shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, accent.copy(alpha = 0.22f), RoundedCornerShape(26.dp)),
+            .border(1.dp, accent.copy(alpha = 0.22f), RoundedCornerShape(10.dp)),
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -122,7 +122,7 @@ fun JamCard(viewModel: ConnectViewModel, defaultHostName: String) {
                     onValueChange = { hostName = it.take(30) },
                     label = { Text("Tu nombre en la Jam") },
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(8.dp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = accent, focusedLabelColor = accent, cursorColor = accent),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -142,7 +142,7 @@ fun JamCard(viewModel: ConnectViewModel, defaultHostName: String) {
                             .widthIn(max = 260.dp)
                             .fillMaxWidth()
                             .aspectRatio(1f)
-                            .background(Color.White, RoundedCornerShape(22.dp))
+                            .background(Color.White, RoundedCornerShape(10.dp))
                             .padding(18.dp),
                     ) {
                         JamQr(link, Modifier.fillMaxWidth().aspectRatio(1f))

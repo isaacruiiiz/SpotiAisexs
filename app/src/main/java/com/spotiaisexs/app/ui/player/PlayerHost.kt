@@ -3607,6 +3607,15 @@ private fun QueuePanel(state: MusicPlayerState, player: MusicPlayer, modifier: M
                 com.spotiaisexs.app.ui.radio.DialSwitchChip("Sin lentas", radioTuning.noSlow, { player.updateRadioTuning { it.copy(noSlow = !it.noSlow) } })
                 com.spotiaisexs.app.ui.radio.DialSwitchChip("Sin repetir artista", radioTuning.noRepeatArtist, { player.updateRadioTuning { it.copy(noRepeatArtist = !it.noRepeatArtist) } })
                 com.spotiaisexs.app.ui.radio.DialSwitchChip("Solo de esta década", radioTuning.thisDecade, { player.updateRadioTuning { it.copy(thisDecade = !it.thisDecade) } })
+                val saveContext = LocalContext.current
+                com.spotiaisexs.app.ui.radio.DialOutlinedButton(
+                    text = "Guardar como emisora",
+                    onClick = {
+                        player.saveCurrentAsStation()?.let { name ->
+                            android.widget.Toast.makeText(saveContext, "Guardada en Inicio: $name", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                )
             }
             Spacer(Modifier.height(10.dp))
         }

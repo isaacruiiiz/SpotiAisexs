@@ -313,6 +313,9 @@ class MusicPlayer @Inject constructor(
     /** Why each radio song was queued, keyed by [radioKeyOf]. */
     val radioReasons: StateFlow<Map<String, RadioReason>> = _radioReasons.asStateFlow()
     private val radioSession = RadioSession()
+    private val _savedStations = MutableStateFlow(loadSavedStations())
+    /** Radios the user saved from "Lo que viene", newest first. */
+    val savedStations: StateFlow<List<SavedStation>> = _savedStations.asStateFlow()
     private var radioRebuildJob: Job? = null
     /** Skips right after the user picks something else say nothing about the skipped song. */
     @Volatile private var radioLearningMutedUntil = 0L
@@ -4478,6 +4481,52 @@ class MusicPlayer @Inject constructor(
             .apply()
     }
 
+    private fun loadSavedStations(): List<SavedStation> = runCatching {
+        radioTuningPrefs.getString("saved_stations", null)
+            ?.let { persistenceJson.decodeFromString<List<SavedStation>>(it) }
+    }.getOrNull().orEmpty()
+
+    private fun storeSavedStations(stations: List<SavedStation>) {
+        _savedStations.value = stations
+        runCatching {
+            radioTuningPrefs.edit().putString("saved_stations", persistenceJson.encodeToString(stations)).apply()
+        }
+    }
+
+    /** Saves the running radio (this song, the dial and the switches as they are) as a home station. */
+    fun saveCurrentAsStation(): String? {
+        val track = _state.value.current ?: return null
+        val tuning = _radioTuning.value
+        val station = SavedStation(
+            id = track.queueKey(),
+            name = "Radio de ${track.title}",
+            seed = track.copy(playbackUrl = null, playbackMimeType = null),
+            distance = tuning.distance,
+            onlySpanish = tuning.onlySpanish,
+            noSlow = tuning.noSlow,
+            noRepeatArtist = tuning.noRepeatArtist,
+            thisDecade = tuning.thisDecade,
+        )
+        storeSavedStations((listOf(station) + _savedStations.value.filter { it.id != station.id }).take(MAX_SAVED_STATIONS))
+        return station.name
+    }
+
+    fun deleteSavedStation(id: String) = storeSavedStations(_savedStations.value.filter { it.id != id })
+
+    fun playSavedStation(station: SavedStation) {
+        play(station.seed, sourceLabel = station.name, startRadio = true)
+        val tuning = _radioTuning.value.copy(
+            distance = station.distance.coerceIn(0, 100),
+            onlySpanish = station.onlySpanish,
+            noSlow = station.noSlow,
+            noRepeatArtist = station.noRepeatArtist,
+            thisDecade = station.thisDecade,
+            station = null,
+        )
+        _radioTuning.value = tuning
+        persistRadioSwitches(tuning)
+    }
+
     /** Key under which [radioReasons] stores the reason of a queued song. */
     fun radioKeyOf(track: PlayableTrack): String = track.queueKey()
 
@@ -6866,6 +6915,7 @@ class MusicPlayer @Inject constructor(
         const val RADIO_REBUILD_DEBOUNCE_MS = 700L
         const val RADIO_SKIPS_TO_REBUILD = 2
         const val RADIO_LEARNING_MUTE_MS = 2_500L
+        const val MAX_SAVED_STATIONS = 12
         /** A focused radio reads only this much of a song's related list. */
         const val FOCUSED_RELATED_LIMIT = 25
         /** Artists ranked above this in the picked song's related list form its neighbourhood. */

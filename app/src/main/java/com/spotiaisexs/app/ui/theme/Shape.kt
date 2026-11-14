@@ -6,17 +6,18 @@ import androidx.compose.ui.unit.dp
 
 /** app.css: --radius: 20px; --radius-sm: 12px; --radius-xs: 8px */
 val SpotiAisexsShapes = Shapes(
-    extraSmall = RoundedCornerShape(8.dp),
-    small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(20.dp),
-    extraLarge = RoundedCornerShape(28.dp),
+    // Design "Dial": small, square-ish corners, like hardware buttons.
+    extraSmall = RoundedCornerShape(4.dp),
+    small = RoundedCornerShape(6.dp),
+    medium = RoundedCornerShape(8.dp),
+    large = RoundedCornerShape(10.dp),
+    extraLarge = RoundedCornerShape(14.dp),
 )
 
 /** Beyond Material3's standard 5-step Shapes() scale — for hero-style
  *  containers (the Home stats card) that should read as a single, large,
  *  continuous surface rather than a boxy web-style card. */
-val ExpressiveHeroShape = RoundedCornerShape(32.dp)
+val ExpressiveHeroShape = RoundedCornerShape(12.dp)
 val ExpressivePillShape = RoundedCornerShape(percent = 50)
 val HeroInnerShape = RoundedCornerShape(24.dp)
 val StatPillShape = RoundedCornerShape(16.dp)

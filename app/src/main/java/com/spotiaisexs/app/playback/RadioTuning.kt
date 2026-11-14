@@ -1,5 +1,6 @@
 package com.spotiaisexs.app.playback
 
+import kotlinx.serialization.Serializable
 import java.util.concurrent.ConcurrentHashMap
 
 /** How many songs of each kind go into every block of five radio songs. */
@@ -98,6 +99,19 @@ enum class RadioStation(
         fun byId(id: String?): RadioStation? = entries.firstOrNull { it.id == id }
     }
 }
+
+/** A radio the user saved from "Lo que viene": its song plus the dial and switches as they were. */
+@Serializable
+data class SavedStation(
+    val id: String,
+    val name: String,
+    val seed: PlayableTrack,
+    val distance: Int,
+    val onlySpanish: Boolean = false,
+    val noSlow: Boolean = false,
+    val noRepeatArtist: Boolean = true,
+    val thisDecade: Boolean = false,
+)
 
 enum class RadioReasonKind { NEIGHBOUR, SAME_ARTIST, LIBRARY, NEW, REDISCOVERY }
 

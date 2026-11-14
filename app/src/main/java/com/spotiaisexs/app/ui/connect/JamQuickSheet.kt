@@ -38,7 +38,7 @@ fun JamQuickSheet(onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         scrimColor = Color.Black.copy(alpha = 0.55f),
     ) {

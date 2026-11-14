@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +51,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -68,6 +71,7 @@ import com.spotiaisexs.app.data.repository.SongPlayStatsRepository
 import com.spotiaisexs.app.playback.MusicPlayer
 import com.spotiaisexs.app.playback.PlayableTrack
 import com.spotiaisexs.app.playback.RadioStation
+import com.spotiaisexs.app.playback.SavedStation
 import com.spotiaisexs.app.playback.RadioTuning
 import com.spotiaisexs.app.playback.toPlayableTrack
 import com.spotiaisexs.app.ui.common.ArtworkImage
@@ -93,6 +97,12 @@ class RadioHomeViewModel @Inject constructor(
     private val playlistRepository: PlaylistRepository,
 ) : ViewModel() {
     val tuning: StateFlow<RadioTuning> = musicPlayer.radioTuning
+
+    val savedStations: StateFlow<List<SavedStation>> = musicPlayer.savedStations
+
+    fun playSaved(station: SavedStation) = musicPlayer.playSavedStation(station)
+
+    fun deleteSaved(station: SavedStation) = musicPlayer.deleteSavedStation(station.id)
 
     private val _recent = MutableStateFlow<List<PlayableTrack>>(emptyList())
     val recent: StateFlow<List<PlayableTrack>> = _recent.asStateFlow()
@@ -155,6 +165,8 @@ fun RadioHomeScreen(
 ) {
     val tuning by viewModel.tuning.collectAsStateWithLifecycle()
     val recent by viewModel.recent.collectAsStateWithLifecycle()
+    val savedStations by viewModel.savedStations.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val feedState by feedViewModel.uiState.collectAsStateWithLifecycle()
     val feed = feedState.feedData
 
@@ -265,27 +277,30 @@ fun RadioHomeScreen(
             Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp)) {
                 SectionTitle("Emisoras")
                 Spacer(Modifier.height(8.dp))
-                val stations = RadioStation.entries.filter { it != RadioStation.TU_MEZCLA }
+                val cells = buildList {
+                    RadioStation.entries.filter { it != RadioStation.TU_MEZCLA }.forEach { station ->
+                        add(StationCell(station.title, station.subtitle, onClick = { viewModel.playStation(station) }))
+                    }
+                    savedStations.forEach { saved ->
+                        add(
+                            StationCell(
+                                title = saved.name,
+                                subtitle = "Guardada, mantén pulsado para quitarla",
+                                onClick = { viewModel.playSaved(saved) },
+                                onLongClick = {
+                                    viewModel.deleteSaved(saved)
+                                    android.widget.Toast.makeText(context, "Emisora quitada", android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                            ),
+                        )
+                    }
+                    add(StationCell("Nueva emisora", "Desde un artista o canción", onClick = onOpenSearch, dashed = true))
+                }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    stations.chunked(2).forEach { pair ->
+                    cells.chunked(2).forEach { pair ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            pair.forEach { station ->
-                                StationButton(
-                                    title = station.title,
-                                    subtitle = station.subtitle,
-                                    onClick = { viewModel.playStation(station) },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                            if (pair.size == 1) {
-                                StationButton(
-                                    title = "Nueva emisora",
-                                    subtitle = "Desde un artista o canción",
-                                    onClick = onOpenSearch,
-                                    dashed = true,
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
+                            pair.forEach { cell -> StationButton(cell, Modifier.weight(1f)) }
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
                 }
@@ -441,21 +456,28 @@ private fun EqualizerLogo(modifier: Modifier = Modifier) {
     }
 }
 
+private class StationCell(
+    val title: String,
+    val subtitle: String,
+    val onClick: () -> Unit,
+    val onLongClick: (() -> Unit)? = null,
+    val dashed: Boolean = false,
+)
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StationButton(
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    dashed: Boolean = false,
-) {
+private fun StationButton(cell: StationCell, modifier: Modifier = Modifier) {
+    val title = cell.title
+    val subtitle = cell.subtitle
+    val dashed = cell.dashed
     val outline = if (dashed) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.outlineVariant
     Surface(
-        onClick = onClick,
         shape = DialCorner,
         color = Color.Transparent,
         modifier = modifier
             .height(60.dp)
+            .clip(DialCorner)
+            .combinedClickable(onClick = cell.onClick, onLongClick = cell.onLongClick)
             .drawBehind {
                 val stroke = 1.dp.toPx()
                 drawRoundRect(

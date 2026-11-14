@@ -196,6 +196,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.spotiaisexs.app.ui.theme.blurSource
+import com.spotiaisexs.app.ui.theme.dialBlur
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -673,16 +675,24 @@ fun PlayerHost(
         drawRect(miniBackdropColor)
         drawContent()
     }
-    val miniGlass = LocalLiquidGlass.current && isLiquidGlassBackdropSupported()
+    // Blur needs Android 12 and a capable device; without it the bars fall back to a dark fill.
+    val miniGlass = com.spotiaisexs.app.ui.theme.isDeviceGlassCapable()
 
     CompositionLocalProvider(
         LocalMusicPlayer provides viewModel.player,
         LocalAddToPlaylist provides requestAddToPlaylist,
-        LocalMiniPlayerScrollClearance provides if (state.current != null) 62.dp else 0.dp,
+        LocalMiniPlayerScrollClearance provides if (state.current != null) 74.dp else 0.dp,
     ) {
         Box(Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxSize().liquidGlassSource(if (miniGlass) miniBackdrop else null)) {
+            Box(Modifier.fillMaxSize().blurSource(miniBackdrop)) {
                 content()
+            }
+            // Progressive blur under the clock and the status icons, on every screen.
+            if (!expanded) {
+                com.spotiaisexs.app.ui.theme.TopBlurFade(
+                    backdrop = if (miniGlass) miniBackdrop else null,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
             }
             if (miniPlayerVisible) {
                 MiniPlayer(
@@ -695,8 +705,8 @@ fun PlayerHost(
                     onClose = viewModel.player::stopAndClear,
                     onJam = { showJamSheet = true },
                     jamLive = jamState?.open == true,
-                    // The bar rests directly on the 58 dp navigation bar.
-                    bottomPadding = if (hasBottomNavigation) 58.dp else 0.dp,
+                    // Floats 10 dp above the 58 dp navigation bar.
+                    bottomPadding = if (hasBottomNavigation) 68.dp else 10.dp,
                     edgeToEdge = !hasBottomNavigation,
                     backdrop = if (miniGlass) miniBackdrop else null,
                     modifier = Modifier.align(Alignment.BottomCenter),
@@ -923,19 +933,20 @@ private fun MiniPlayer(
     val shownY by animateFloatAsState(dragY, ExpressiveMotion.spatialSpring(), label = "miniPlayerY")
     val threshold = with(LocalDensity.current) { 72.dp.toPx() }
     val isTablet = isTabletOrWideScreen()
-    // Design "Dial": a flat bar, edge to edge, resting on the navigation bar.
-    val shape = androidx.compose.ui.graphics.RectangleShape
-    val hairline = MaterialTheme.colorScheme.outlineVariant
-    val positionedModifier = if (edgeToEdge && !isTablet) {
-        modifier.fillMaxWidth()
-    } else {
-        modifier
-            .windowInsetsPadding(
-                WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
-            )
-            .padding(bottom = if (isTablet && edgeToEdge) 0.dp else bottomPadding)
-            .fillMaxWidth()
-    }
+    // Design "Dial": a floating smoked-glass card with side margins, a little
+    // above the navigation bar. What scrolls behind shows through blurred.
+    val shape = RoundedCornerShape(10.dp)
+    val rim = Color.White.copy(alpha = 0.09f)
+    val pillTint = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.58f)
+    val view = LocalView.current
+    val positionedModifier = modifier
+        .windowInsetsPadding(
+            WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
+        )
+        .padding(horizontal = 10.dp)
+        .padding(bottom = bottomPadding)
+        .widthIn(max = 680.dp)
+        .fillMaxWidth()
     Box(
         modifier = positionedModifier
             .graphicsLayer {
@@ -947,6 +958,9 @@ private fun MiniPlayer(
                 detectDragGestures(
                     onDragCancel = { dragX = 0f; dragY = 0f },
                     onDragEnd = {
+                        if (abs(dragX) > threshold || abs(dragY) > threshold) {
+                            com.spotiaisexs.app.ui.common.DialHaptics.step(view)
+                        }
                         when {
                             dragY > threshold -> onClose()
                             dragY < -threshold -> onExpand()
@@ -968,37 +982,26 @@ private fun MiniPlayer(
         Surface(
             shape = shape,
             // Transparent card when glass (glass draws scrim), 95% primaryContainer otherwise to match theme color.
-            color = if (isGlass) Color.Transparent else MaterialTheme.colorScheme.background,
+            color = Color.Transparent,
             tonalElevation = 0.dp,
             shadowElevation = 0.dp,
-            modifier = Modifier.fillMaxWidth().drawBehind {
-                drawLine(hairline, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx())
-            }.then(
-                if (isGlass && backdrop != null) {
-                    Modifier.liquidGlass(backdrop, layer, luminance.value, shape)
-                } else Modifier
-            ),
+            border = androidx.compose.foundation.BorderStroke(1.dp, rim),
+            modifier = Modifier
+                .fillMaxWidth()
+                .dialBlur(backdrop, shape, radius = 24.dp, fallback = Color(0xF21A1A1A)) { drawRect(pillTint) },
         ) {
-            Column(
-                modifier = if (edgeToEdge) {
-                    Modifier.windowInsetsPadding(
-                        WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
-                    )
-                } else {
-                    Modifier
-                },
-            ) {
+            Column {
                 Row(
-                    Modifier.fillMaxWidth().height(58.dp).padding(start = 20.dp, end = 10.dp),
+                    Modifier.fillMaxWidth().height(58.dp).padding(start = 9.dp, end = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(Modifier.size(40.dp)) {
                         Surface(
-                            shape = RoundedCornerShape(4.dp),
+                            shape = RoundedCornerShape(6.dp),
                             color = MaterialTheme.colorScheme.surfaceContainerHighest,
                             modifier = Modifier.fillMaxSize(),
                         ) {
-                            PlayerArtwork(track, Modifier.fillMaxSize(), 4.dp)
+                            PlayerArtwork(track, Modifier.fillMaxSize(), 6.dp)
                         }
                     }
                     // Glass surface follows the theme (frosted white → black text
@@ -1030,7 +1033,10 @@ private fun MiniPlayer(
                     // Jam shortcut: opens the Jam sheet (start it, show the QR,
                     // share the link). Accent-filled while a Jam is live.
                     IconButton(
-                        onClick = onJam,
+                        onClick = {
+                            com.spotiaisexs.app.ui.common.DialHaptics.click(view)
+                            onJam()
+                        },
                         modifier = Modifier.size(44.dp),
                     ) {
                         Icon(
@@ -1041,7 +1047,13 @@ private fun MiniPlayer(
                         )
                     }
                     // Plain play/pause, like the mockup; swiping the bar left still skips.
-                    IconButton(onClick = onToggle, modifier = Modifier.size(44.dp)) {
+                    IconButton(
+                        onClick = {
+                            com.spotiaisexs.app.ui.common.DialHaptics.click(view)
+                            onToggle()
+                        },
+                        modifier = Modifier.size(44.dp),
+                    ) {
                         if (state.isBuffering) {
                             ExpressiveInlineLoadingIndicator(
                                 size = 22.dp,
@@ -1068,10 +1080,10 @@ private fun MiniPlayerProgress(progressState: StateFlow<PlaybackProgressState>) 
     Box(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .height(3.dp)
+            .padding(horizontal = 9.dp)
+            .height(2.dp)
             .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .background(Color.White.copy(alpha = 0.14f)),
     ) {
         // Scale an already measured layer instead of changing its width and
         // forcing the mini-player through measure/layout on every ticker tick.

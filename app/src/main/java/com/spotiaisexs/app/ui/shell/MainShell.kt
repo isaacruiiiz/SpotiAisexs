@@ -139,6 +139,8 @@ import com.spotiaisexs.app.ui.theme.SquircleShape
 import com.spotiaisexs.app.ui.theme.rememberLayerBackdrop
 import com.spotiaisexs.app.ui.theme.isLiquidGlassBackdropSupported
 import com.spotiaisexs.app.ui.theme.liquidGlassSource
+import com.spotiaisexs.app.ui.theme.blurSource
+import com.spotiaisexs.app.ui.theme.dialBlur
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -168,6 +170,11 @@ private enum class MainTab(val labelRes: Int) {
 }
 
 private val DialNavHeight = 58.dp
+
+/** Height of the dimming gradient above the navigation bar (behind the floating player). */
+private val DialNavScrimHeight = 96.dp
+private const val DIAL_NAV_TINT_TOP = 0.42f
+private const val DIAL_NAV_TINT_BOTTOM = 0.82f
 
 /** Shared with any screen hosted inside [MainShell] so their scrolling
  *  lists know how much bottom content padding to reserve — the nav
@@ -245,7 +252,7 @@ fun MainShell(
         HorizontalPager(
             state = pagerState,
             beyondViewportPageCount = 0,
-            modifier = Modifier.fillMaxSize().liquidGlassSource(if (navGlass) navigationBackdrop else null),
+            modifier = Modifier.fillMaxSize().blurSource(navigationBackdrop),
         ) { page ->
             val isCurrent = page == pagerState.currentPage
             PredictiveBackScreen(
@@ -314,6 +321,7 @@ fun MainShell(
                 contentColor = MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
+                    .zIndex(2f)
                     .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
                     .padding(end = 16.dp, bottom = DialNavHeight + LocalMiniPlayerScrollClearance.current + 14.dp)
                     .size(52.dp),
@@ -327,13 +335,28 @@ fun MainShell(
                 }
             }
         }
-        DialNavBar(
-            selected = if (tabs[selectedTabIndex] == MainTab.FEED) DialNavItem.RADIO else DialNavItem.LIBRARY,
-            onRadio = { goTo(MainTab.FEED) },
-            onSearch = onOpenSearch,
-            onLibrary = { goTo(MainTab.PLAYLISTS) },
-            modifier = Modifier.align(Alignment.BottomCenter),
-        )
+        Column(Modifier.align(Alignment.BottomCenter)) {
+            // Content dims as it nears the bars, so the floating player and the
+            // navigation read over anything without a hard edge.
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(DialNavScrimHeight)
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = DIAL_NAV_TINT_TOP),
+                        ),
+                    ),
+            )
+            DialNavBar(
+                backdrop = navigationBackdrop,
+                selected = if (tabs[selectedTabIndex] == MainTab.FEED) DialNavItem.RADIO else DialNavItem.LIBRARY,
+                onRadio = { goTo(MainTab.FEED) },
+                onSearch = onOpenSearch,
+                onLibrary = { goTo(MainTab.PLAYLISTS) },
+            )
+        }
     }
 }
 
@@ -408,23 +431,31 @@ private fun UpdatePromptCard(
 private enum class DialNavItem { RADIO, LIBRARY }
 
 /**
- * Design "Dial": a flat bar with a hairline on top and three items (Radio,
- * Buscar, Biblioteca). The active one is orange with a 2 dp marker above it.
+ * Design "Dial": three items (Radio, Buscar, Biblioteca) on smoked glass.
+ * What scrolls behind the bar shows through blurred and darkened; the active
+ * item is orange.
  */
 @Composable
 private fun DialNavBar(
+    backdrop: LayerBackdrop?,
     selected: DialNavItem,
     onRadio: () -> Unit,
     onSearch: () -> Unit,
     onLibrary: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val hairline = MaterialTheme.colorScheme.outlineVariant
     Surface(
-        color = MaterialTheme.colorScheme.background,
+        color = Color.Transparent,
         modifier = modifier
             .fillMaxWidth()
-            .drawBehind { drawLine(hairline, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx()) },
+            .dialBlur(backdrop, androidx.compose.ui.graphics.RectangleShape, radius = 22.dp, fallback = Color(0xF5000000)) {
+                drawRect(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = DIAL_NAV_TINT_TOP),
+                        1f to Color.Black.copy(alpha = DIAL_NAV_TINT_BOTTOM),
+                    ),
+                )
+            },
     ) {
         Row(
             Modifier
@@ -448,14 +479,19 @@ private fun DialNavButton(
     modifier: Modifier = Modifier,
 ) {
     val accent = MaterialTheme.colorScheme.primary
-    val color = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant
+    val color = if (selected) accent else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+    val view = LocalView.current
     Column(
         modifier = modifier
             .fillMaxHeight()
-            .drawBehind {
-                if (selected) drawRect(accent, size = androidx.compose.ui.geometry.Size(size.width, 2.dp.toPx()))
-            }
-            .selectable(selected = selected, onClick = onClick, role = Role.Tab),
+            .selectable(
+                selected = selected,
+                onClick = {
+                    com.spotiaisexs.app.ui.common.DialHaptics.click(view)
+                    onClick()
+                },
+                role = Role.Tab,
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {

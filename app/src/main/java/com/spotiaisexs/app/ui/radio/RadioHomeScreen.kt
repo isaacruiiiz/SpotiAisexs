@@ -18,7 +18,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -52,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -75,6 +78,7 @@ import com.spotiaisexs.app.playback.SavedStation
 import com.spotiaisexs.app.playback.RadioTuning
 import com.spotiaisexs.app.playback.toPlayableTrack
 import com.spotiaisexs.app.ui.common.ArtworkImage
+import com.spotiaisexs.app.ui.common.DialHaptics
 import com.spotiaisexs.app.ui.feed.ArtistAlbumNavBridgeFeed
 import com.spotiaisexs.app.ui.feed.FeedViewModel
 import com.spotiaisexs.app.ui.navigation.ArtistAlbumNavigator
@@ -167,6 +171,7 @@ fun RadioHomeScreen(
     val recent by viewModel.recent.collectAsStateWithLifecycle()
     val savedStations by viewModel.savedStations.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val view = LocalView.current
     val feedState by feedViewModel.uiState.collectAsStateWithLifecycle()
     val feed = feedState.feedData
 
@@ -189,8 +194,13 @@ fun RadioHomeScreen(
     val artists = feed.topArtists.distinctBy { it.name.lowercase() }.take(10)
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize().statusBarsPadding(),
-        contentPadding = PaddingValues(bottom = FloatingNavDefaults.contentBottomPadding() + 12.dp),
+        // No status-bar padding on the list itself: its content scrolls up under the
+        // clock, where the progressive blur fades it out.
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding(),
+            bottom = FloatingNavDefaults.contentBottomPadding() + 12.dp,
+        ),
     ) {
         item(key = "header") {
             Column(Modifier.padding(start = 20.dp, end = 8.dp, top = 12.dp)) {
@@ -251,7 +261,10 @@ fun RadioHomeScreen(
                         }
                         Spacer(Modifier.width(12.dp))
                         Surface(
-                            onClick = { viewModel.playStation(RadioStation.TU_MEZCLA) },
+                            onClick = {
+                                DialHaptics.confirm(view)
+                                viewModel.playStation(RadioStation.TU_MEZCLA)
+                            },
                             shape = CircleShape,
                             color = MaterialTheme.colorScheme.primary,
                             contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -288,6 +301,7 @@ fun RadioHomeScreen(
                                 subtitle = "Guardada, mantén pulsado para quitarla",
                                 onClick = { viewModel.playSaved(saved) },
                                 onLongClick = {
+                                    DialHaptics.reject(view)
                                     viewModel.deleteSaved(saved)
                                     android.widget.Toast.makeText(context, "Emisora quitada", android.widget.Toast.LENGTH_SHORT).show()
                                 },
@@ -471,13 +485,20 @@ private fun StationButton(cell: StationCell, modifier: Modifier = Modifier) {
     val subtitle = cell.subtitle
     val dashed = cell.dashed
     val outline = if (dashed) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.outlineVariant
+    val view = LocalView.current
     Surface(
         shape = DialCorner,
         color = Color.Transparent,
         modifier = modifier
             .height(60.dp)
             .clip(DialCorner)
-            .combinedClickable(onClick = cell.onClick, onLongClick = cell.onLongClick)
+            .combinedClickable(
+                onClick = {
+                    DialHaptics.click(view)
+                    cell.onClick()
+                },
+                onLongClick = cell.onLongClick,
+            )
             .drawBehind {
                 val stroke = 1.dp.toPx()
                 drawRoundRect(
@@ -577,7 +598,13 @@ private fun SongRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        IconButton(onClick = onQueue) {
+        val view = LocalView.current
+        IconButton(
+            onClick = {
+                DialHaptics.confirm(view)
+                onQueue()
+            },
+        ) {
             Icon(Icons.Filled.Add, contentDescription = "Añadir $title a la cola", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }

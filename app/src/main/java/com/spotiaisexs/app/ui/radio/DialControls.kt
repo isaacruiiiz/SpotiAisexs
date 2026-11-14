@@ -38,6 +38,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -50,7 +51,11 @@ import androidx.compose.ui.unit.dp
 import com.spotiaisexs.app.playback.RadioReason
 import com.spotiaisexs.app.playback.RadioReasonKind
 import com.spotiaisexs.app.playback.RadioTuning
+import com.spotiaisexs.app.ui.common.DialHaptics
 import kotlin.math.roundToInt
+
+/** The dial gives one light notch every this many points of its 0-100 scale. */
+private const val DIAL_NOTCH = 4
 
 /** Corner radius of the "Dial" design: small and square-ish, like hardware buttons. */
 val DialCorner = RoundedCornerShape(8.dp)
@@ -73,9 +78,24 @@ fun RadioDial(
     val accent = MaterialTheme.colorScheme.primary
     val tick = MaterialTheme.colorScheme.outline
     val onChange by rememberUpdatedState(onDistanceChange)
+    val view = LocalView.current
+    val currentDistance by rememberUpdatedState(distance)
     var dragging by remember { mutableStateOf<Int?>(null) }
     val shown = (dragging ?: distance).coerceIn(0, 100)
     val scaleHeight = if (tall) 26.dp else 18.dp
+
+    // The dial clicks under the finger like a real tuner: a light notch every few
+    // points of the scale and a firmer one when the needle enters another zone.
+    fun moveNeedle(to: Int) {
+        val from = dragging ?: currentDistance
+        if (to == from) return
+        if (RadioTuning(distance = to).label != RadioTuning(distance = from).label) {
+            DialHaptics.step(view)
+        } else if (to / DIAL_NOTCH != from / DIAL_NOTCH) {
+            DialHaptics.tick(view)
+        }
+        dragging = to
+    }
 
     Column(modifier) {
         Canvas(
@@ -85,13 +105,14 @@ fun RadioDial(
                 .height(44.dp)
                 .pointerInput(Unit) {
                     detectTapGestures { offset ->
+                        DialHaptics.step(view)
                         onChange(((offset.x / size.width) * 100f).roundToInt().coerceIn(0, 100))
                     }
                 }
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onDragStart = { offset ->
-                            dragging = ((offset.x / size.width) * 100f).roundToInt().coerceIn(0, 100)
+                            moveNeedle(((offset.x / size.width) * 100f).roundToInt().coerceIn(0, 100))
                         },
                         onDragEnd = {
                             dragging?.let { onChange(it) }
@@ -100,7 +121,7 @@ fun RadioDial(
                         onDragCancel = { dragging = null },
                     ) { change, _ ->
                         change.consume()
-                        dragging = ((change.position.x / size.width) * 100f).roundToInt().coerceIn(0, 100)
+                        moveNeedle(((change.position.x / size.width) * 100f).roundToInt().coerceIn(0, 100))
                     }
                 }
                 .semantics {
@@ -157,8 +178,12 @@ fun DialOutlinedButton(
     leading: (@Composable () -> Unit)? = null,
 ) {
     val color = if (accent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+    val view = LocalView.current
     Surface(
-        onClick = onClick,
+        onClick = {
+            DialHaptics.click(view)
+            onClick()
+        },
         shape = DialCorner,
         color = Color.Transparent,
         contentColor = color,
@@ -227,8 +252,13 @@ fun RadioReasonStrip(
 /** A switch drawn as a chip: filled orange when on, bordered when off. */
 @Composable
 fun DialSwitchChip(text: String, selected: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    val view = LocalView.current
     Surface(
-        onClick = onToggle,
+        onClick = {
+            // Turning a switch on feels like a confirmation, turning it off like a plain click.
+            if (selected) DialHaptics.click(view) else DialHaptics.confirm(view)
+            onToggle()
+        },
         shape = DialCorner,
         color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
         contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,

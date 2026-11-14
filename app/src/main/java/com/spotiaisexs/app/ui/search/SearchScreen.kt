@@ -826,10 +826,12 @@ private fun SearchResultRow(
     onStation: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val hapticView = androidx.compose.ui.platform.LocalView.current
     // Spotify-style swipe: drag a song to the right and it goes to the queue.
     val queueAction by androidx.compose.runtime.rememberUpdatedState<(() -> Unit)?>(
         onQueue?.let { action ->
             {
+                com.spotiaisexs.app.ui.common.DialHaptics.confirm(hapticView)
                 action()
                 android.widget.Toast.makeText(context, "Añadida a la cola", android.widget.Toast.LENGTH_SHORT).show()
             }
@@ -880,7 +882,12 @@ private fun SearchResultRow(
                             onDragCancel = { swipeX = 0f },
                         ) { change, amount ->
                             change.consume()
-                            swipeX = (swipeX + amount).coerceIn(0f, queueThreshold * 1.4f)
+                            val next = (swipeX + amount).coerceIn(0f, queueThreshold * 1.4f)
+                            // A notch when the row passes the point where letting go queues it.
+                            if ((next >= queueThreshold) != (swipeX >= queueThreshold)) {
+                                com.spotiaisexs.app.ui.common.DialHaptics.step(hapticView)
+                            }
+                            swipeX = next
                         }
                     }
                 } else {

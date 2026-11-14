@@ -12,6 +12,6 @@
 
     <!-- Android Auto: the default accent of the design ("Cristal, color de
          portada": hsl(16, 90%, 76%) from #FF7A45) and its dark ink. -->
-    <color name="auto_accent">#FFF9A88B</color>
-    <color name="auto_accent_ink">#FF2A0F06</color>
+    <color name="auto_accent">#FFFF7A1A</color>
+    <color name="auto_accent_ink">#FF1A0A00</color>
 </resources>

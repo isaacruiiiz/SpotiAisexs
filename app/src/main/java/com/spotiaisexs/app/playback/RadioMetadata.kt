@@ -65,7 +65,7 @@ class RadioMetadata @Inject constructor(
 
     /** Year and tempo for as many of [tracks] as [budgetMs] allows; cached ones are free. */
     suspend fun factsFor(tracks: List<Pair<String, String>>, budgetMs: Long): Map<String, TrackFacts> {
-        val missing = tracks.distinctBy { key(it.first, it.second) }.filter { key(it.first, it.second) !in facts }
+        val missing = tracks.distinctBy { key(it.first, it.second) }.filter { !facts.containsKey(key(it.first, it.second)) }
         if (missing.isNotEmpty()) {
             withTimeoutOrNull(budgetMs) {
                 coroutineScope {
@@ -84,7 +84,7 @@ class RadioMetadata @Inject constructor(
 
     private fun fetchFacts(title: String, artist: String) {
         val k = key(title, artist)
-        if (k in facts) return
+        if (facts.containsKey(k)) return
         runCatching {
             val cleanTitle = title.replace(Regex("""\(.*?\)|\[.*?]"""), " ").trim().ifBlank { title }
             val mainArtist = artist.split(",", "&", " feat", " ft", " x ").first().trim().ifBlank { artist }
@@ -149,7 +149,7 @@ class RadioMetadata @Inject constructor(
         val wanted = artists.map { it.trim() }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }
         withTimeoutOrNull(budgetMs) {
             coroutineScope {
-                wanted.filter { it.lowercase() !in tags }
+                wanted.filter { !tags.containsKey(it.lowercase()) }
                     .map { artist -> async { gate.withPermit { artistTags(artist) } } }
                     .awaitAll()
             }

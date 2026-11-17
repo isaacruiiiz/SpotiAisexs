@@ -3470,7 +3470,8 @@ class MusicPlayer @Inject constructor(
      *   playing) and the last session should still be restorable the next
      *   time the app opens.
      */
-    fun stopAndClear(clearSession: Boolean = true) = onMain {
+    fun stopAndClear(clearSession: Boolean = true, reason: String = "sin motivo indicado") = onMain {
+        PlaybackStopLog.record(appContext, "Reproducción detenida y cola vaciada: $reason", withCaller = true)
         if (isCasting) castPlayback?.disconnect()
         cancelCrossfade()
         resolutionRequests.values.forEach { it.second.cancel() }
@@ -3500,7 +3501,7 @@ class MusicPlayer @Inject constructor(
             if (index !in snapshot.queue.indices) return@onMain
             val queue = snapshot.queue.toMutableList().apply { removeAt(index) }
             if (queue.isEmpty()) {
-                stopAndClear()
+                stopAndClear(reason = "Se quitó la última canción de la cola")
                 return@onMain
             }
             val currentIndex = (snapshot.currentIndex - if (index < snapshot.currentIndex) 1 else 0)

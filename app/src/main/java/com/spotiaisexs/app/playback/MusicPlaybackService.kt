@@ -171,7 +171,12 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
                     override fun onSkipToNext() = musicPlayer.next()
                     override fun onSkipToPrevious() = musicPlayer.previous()
                     override fun onSeekTo(pos: Long) = musicPlayer.seekTo(pos)
-                    override fun onStop() = musicPlayer.stopAndClear()
+                    // Headphones, watches and cars send STOP for many reasons (disconnecting,
+                    // switching output). Treat it as pause: the queue and the player stay.
+                    override fun onStop() {
+                        PlaybackStopLog.record(this@MusicPlaybackService, "Sesión multimedia: STOP (auriculares, reloj o coche); ahora solo pausa")
+                        musicPlayer.pause()
+                    }
                     override fun onSkipToQueueItem(id: Long) = musicPlayer.seekToQueueItem(id.toInt())
                     override fun onSetShuffleMode(shuffleMode: Int) {
                         musicPlayer.setShuffleEnabled(shuffleMode != PlaybackStateCompat.SHUFFLE_MODE_NONE)
@@ -577,7 +582,7 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
             ACTION_NEXT -> musicPlayer.next()
             ACTION_SHUFFLE -> musicPlayer.toggleShuffle()
             ACTION_REPEAT -> musicPlayer.cycleRepeatMode()
-            ACTION_STOP -> musicPlayer.stopAndClear()
+            ACTION_STOP -> musicPlayer.stopAndClear(reason = "Botón Detener de la notificación")
         }
         return START_STICKY
     }
@@ -599,7 +604,7 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
         // launch. Every other stopAndClear() call site (explicit stop
         // action, notification "stop", media session onStop) is untouched
         // and still clears the session as before.
-        musicPlayer.stopAndClear(clearSession = false)
+        musicPlayer.stopAndClear(clearSession = false, reason = "App quitada de recientes estando en pausa")
         super.onTaskRemoved(rootIntent)
     }
 

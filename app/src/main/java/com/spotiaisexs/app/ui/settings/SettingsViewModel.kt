@@ -604,7 +604,7 @@ class SettingsViewModel @Inject constructor(
             // service, cast, and widget state are reset before sign-out can
             // cancel this coroutine. The singleton player stays alive.
             withContext(Dispatchers.Main.immediate) {
-                musicPlayer.stopAndClear(clearSession = true)
+                musicPlayer.stopAndClear(clearSession = true, reason = "Borrar todos los datos")
             }
             downloadManager.clearAllDownloads()
             discoverRepository.clearRecommendationExclusions()
@@ -821,6 +821,8 @@ class SettingsViewModel @Inject constructor(
         sb.appendLine("placedWidgets=${placedWidgets ?: "<lookup failed>"}")
         sb.appendLine("---- crash guard log (persisted across restarts) ----")
         sb.appendLine(readCrashGuardLog())
+        sb.appendLine("---- playback stops (what stopped or cleared the player) ----")
+        sb.appendLine(com.spotiaisexs.app.playback.PlaybackStopLog.read(context))
         sb.appendLine("---- startup trail (how far the last launches got) ----")
         sb.appendLine(runCatching { com.spotiaisexs.app.StartupTrail.readTail(context) }.getOrDefault("(startup trail unavailable)"))
         sb.appendLine("---- logcat (this process) ----")

@@ -951,18 +951,20 @@ private fun MiniPlayer(
         modifier = positionedModifier
             .graphicsLayer {
                 translationX = shownX
-                translationY = shownY.coerceAtLeast(0f)
-                alpha = (1f - (abs(shownX) + shownY.coerceAtLeast(0f)) / (threshold * 4f)).coerceIn(0.55f, 1f)
+                translationY = 0f
+                alpha = (1f - abs(shownX) / (threshold * 4f)).coerceIn(0.55f, 1f)
             }
             .pointerInput(track.videoId, track.title) {
                 detectDragGestures(
                     onDragCancel = { dragX = 0f; dragY = 0f },
                     onDragEnd = {
-                        if (abs(dragX) > threshold || abs(dragY) > threshold) {
+                        if (abs(dragX) > threshold || dragY < -threshold) {
                             com.spotiaisexs.app.ui.common.DialHaptics.step(view)
                         }
+                        // Swiping the floating player down used to stop playback and empty
+                        // the queue. Over scrolling content that fired by accident, so a
+                        // downward swipe now does nothing; stopping is in the notification.
                         when {
-                            dragY > threshold -> onClose()
                             dragY < -threshold -> onExpand()
                             dragX < -threshold -> onNext()
                             dragX > threshold -> onPrevious()
@@ -2696,15 +2698,6 @@ private fun FullPlayer(
                                             }
                                         }
                                     }
-                                    if (state.isEndlessQueue) {
-                                        val reason = radioReasons[player.radioKeyOf(track)]
-                                        Spacer(Modifier.height(10.dp))
-                                        com.spotiaisexs.app.ui.radio.RadioReasonStrip(
-                                            because = reason?.because ?: "la elegiste tú; de aquí sale la radio",
-                                            onMore = player::moreLikeCurrent,
-                                            onLess = player::lessLikeCurrent,
-                                        )
-                                    }
                                     Spacer(Modifier.height(12.dp))
                                     SeekBar(
                                         progressState = progressState,
@@ -3575,6 +3568,14 @@ private fun QueuePanel(state: MusicPlayerState, player: MusicPlayer, modifier: M
             Spacer(Modifier.height(6.dp))
         }
         if (state.isEndlessQueue) {
+            state.current?.let { playing ->
+                com.spotiaisexs.app.ui.radio.RadioReasonStrip(
+                    because = radioReasons[player.radioKeyOf(playing)]?.because ?: "la elegiste tú; de aquí sale la radio",
+                    onMore = player::moreLikeCurrent,
+                    onLess = player::lessLikeCurrent,
+                )
+                Spacer(Modifier.height(10.dp))
+            }
             // The dial and its switches: moving them re-plans what the radio had lined up.
             Surface(
                 shape = RoundedCornerShape(10.dp),

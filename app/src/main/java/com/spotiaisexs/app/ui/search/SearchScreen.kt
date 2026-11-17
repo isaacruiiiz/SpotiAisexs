@@ -460,6 +460,9 @@ fun SearchScreen(
                                                 onLongClick = {
                                                     if (state.tab == SearchTab.TRACKS) miniTrayItem = topResult
                                                 },
+                                                onQueue = if (state.tab == SearchTab.TRACKS) {
+                                                    { viewModel.queueResult(topResult) }
+                                                } else null,
                                                 onMenu = {
                                                     menuTarget = when (state.tab) {
                                                         SearchTab.TRACKS -> TrackMenuTarget.Track(topResult.name, topResult.artist.orEmpty(), topResult.url)
@@ -560,8 +563,24 @@ private fun TopResultCard(
     onPlay: () -> Unit,
     onMenu: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    onQueue: (() -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(20.dp)
+    // Same Spotify-style swipe as the other song rows: drag right to queue it.
+    val context = LocalContext.current
+    val hapticView = androidx.compose.ui.platform.LocalView.current
+    val queueAction by androidx.compose.runtime.rememberUpdatedState<(() -> Unit)?>(
+        onQueue?.let { action ->
+            {
+                com.spotiaisexs.app.ui.common.DialHaptics.confirm(hapticView)
+                action()
+                android.widget.Toast.makeText(context, "Añadida a la cola", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        },
+    )
+    val queueThreshold = with(androidx.compose.ui.platform.LocalDensity.current) { 84.dp.toPx() }
+    var swipeX by remember(item.videoId, item.name) { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val shownSwipeX by androidx.compose.animation.core.animateFloatAsState(swipeX, label = "topQueueSwipe")
     val containerColor = if (isPlaying) {
         MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
     } else {
@@ -569,15 +588,65 @@ private fun TopResultCard(
     }
     val cardContentColor = MaterialTheme.colorScheme.onSurface
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+    if (onQueue != null && shownSwipeX > 1f) {
+        Box(
+            Modifier
+                .matchParentSize()
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.primary)
+                .padding(start = 20.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Text(
+                "A la cola",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+    }
     Card(
         shape = shape,
         colors = CardDefaults.cardColors(
-            containerColor = containerColor,
+            // Opaque while swiping so the orange strip only shows beside the card.
+            containerColor = if (shownSwipeX > 1f) {
+                androidx.compose.ui.graphics.lerp(
+                    MaterialTheme.colorScheme.background,
+                    containerColor.copy(alpha = 1f),
+                    containerColor.alpha,
+                )
+            } else containerColor,
             contentColor = cardContentColor,
         ),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .graphicsLayer { translationX = shownSwipeX }
+            .then(
+                if (onQueue != null) {
+                    Modifier.pointerInput(item.videoId, item.name) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                if (swipeX >= queueThreshold) queueAction?.invoke()
+                                swipeX = 0f
+                            },
+                            onDragCancel = { swipeX = 0f },
+                        ) { change, amount ->
+                            change.consume()
+                            val next = (swipeX + amount).coerceIn(0f, queueThreshold * 1.4f)
+                            if ((next >= queueThreshold) != (swipeX >= queueThreshold)) {
+                                com.spotiaisexs.app.ui.common.DialHaptics.step(hapticView)
+                            }
+                            swipeX = next
+                        }
+                    }
+                } else {
+                    Modifier
+                },
+            )
             .combinedClickable(
                 onClick = onPlay,
                 onLongClick = onLongClick?.let { action ->
@@ -684,6 +753,7 @@ private fun TopResultCard(
                 )
             }
         }
+    }
     }
 }
 

@@ -562,6 +562,9 @@ fun SpotiAisexsNavHost(
                     onOpenArtist = { name, id ->
                         navController.navigate(Screen.ArtistDetail.createRoute(name, id))
                     },
+                    onOpenThisIs = { playlistId ->
+                        navController.navigate(Screen.FeedPlaylistDetail.createRoute(playlistId))
+                    },
                 )
             }
         }

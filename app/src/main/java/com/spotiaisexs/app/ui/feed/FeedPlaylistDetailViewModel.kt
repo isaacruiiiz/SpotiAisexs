@@ -44,6 +44,7 @@ class FeedPlaylistDetailViewModel @Inject constructor(
     private val importManager: PlaylistImportManager,
     private val playlistRepository: PlaylistRepository,
     private val feedRepository: FeedRepository,
+    private val thisIsPlaylists: com.spotiaisexs.app.data.thisis.ThisIsPlaylists,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow<FeedPlaylistDetailUiState>(FeedPlaylistDetailUiState.Loading)
     val uiState: StateFlow<FeedPlaylistDetailUiState> = _uiState.asStateFlow()
@@ -62,6 +63,10 @@ class FeedPlaylistDetailViewModel @Inject constructor(
         val previous = if (playlistId == currentPlaylistId) _uiState.value as? FeedPlaylistDetailUiState.Success else null
         currentPlaylistId = playlistId
         _uiState.value = previous?.copy(isLoadingMore = true, loadError = null) ?: FeedPlaylistDetailUiState.Loading
+        if (com.spotiaisexs.app.data.thisis.ThisIsPlaylists.isThisIs(playlistId)) {
+            loadJob = viewModelScope.launch { loadThisIs(playlistId) }
+            return
+        }
         loadJob = viewModelScope.launch {
             val liked = playlistId == "yt_liked"
             val recent = playlistId == "yt_recent"
@@ -120,6 +125,19 @@ class FeedPlaylistDetailViewModel @Inject constructor(
                 _uiState.value = state?.copy(isLoadingMore = false, loadError = message)
                     ?: FeedPlaylistDetailUiState.Error(message)
             }
+        }
+    }
+
+    /** "Esto es {artista}": built here from the artist's hits and the user's own listening. */
+    private suspend fun loadThisIs(playlistId: String) {
+        try {
+            val result = thisIsPlaylists.build(playlistId)
+            kotlin.coroutines.coroutineContext.ensureActive()
+            _uiState.value = FeedPlaylistDetailUiState.Success(result)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            _uiState.value = FeedPlaylistDetailUiState.Error(error.message ?: "No se pudo montar la playlist. Reintenta.")
         }
     }
 

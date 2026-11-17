@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Shuffle
@@ -111,6 +112,7 @@ fun ArtistDetailScreen(
     onBack: () -> Unit,
     onOpenAlbum: (title: String, artist: String, browseId: String?) -> Unit = { _, _, _ -> },
     onOpenArtist: (name: String, browseId: String?) -> Unit = { _, _ -> },
+    onOpenThisIs: (playlistId: String) -> Unit = {},
     viewModel: ArtistViewModel = hiltViewModel(),
     genreBridge: ArtistDetailGenreBridge = hiltViewModel(),
 ) {
@@ -406,6 +408,72 @@ fun ArtistDetailScreen(
                         }
                     }
 
+
+                    // "Esto es {artista}": their hits mixed with what the user plays most of them.
+                    if (data.topSongs.isNotEmpty()) {
+                        item(key = "artist_this_is") {
+                            Surface(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onOpenThisIs(
+                                        com.spotiaisexs.app.data.thisis.ThisIsPlaylists.idFor(
+                                            data.name,
+                                            data.browseId.takeIf { it.isNotBlank() } ?: browseId,
+                                        ),
+                                    )
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .size(56.dp)
+                                            .clip(RoundedCornerShape(6.dp)),
+                                    ) {
+                                        com.spotiaisexs.app.ui.common.ArtworkImage(
+                                            name = data.name,
+                                            artist = data.name,
+                                            embeddedUrl = data.artworkUrl ?: data.fallbackArtworkUrl,
+                                            fallbackIcon = Icons.Filled.Person,
+                                            modifier = Modifier.matchParentSize(),
+                                        )
+                                        Box(
+                                            Modifier
+                                                .align(Alignment.TopStart)
+                                                .size(width = 3.dp, height = 20.dp)
+                                                .background(MaterialTheme.colorScheme.primary),
+                                        )
+                                    }
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            "Esto es ${data.name}",
+                                            style = com.spotiaisexs.app.ui.theme.heroTitle(24),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            "Sus éxitos mezclados con lo que más le escuchas",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     // 2. Genre Tags & Bio
                     if (data.tags.isNotEmpty() || !data.bio.isNullOrBlank()) {

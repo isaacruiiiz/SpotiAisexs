@@ -58,6 +58,38 @@ class SongPlayStatsRepository @Inject constructor(
 
     suspend fun recentlyPlayed(limit: Int = 20): List<SongPlayStatsEntity> = dao.recentlyPlayed(limit)
 
+    /**
+     * The user's most listened songs where [artist] is one of the credited
+     * artists (features included), most listened first.
+     */
+    suspend fun mostPlayedByArtist(artist: String, limit: Int = 60): List<SongPlayStatsEntity> {
+        val wanted = artist.trim().lowercase()
+        if (wanted.isBlank()) return emptyList()
+        // "_" and "%" in a name only widen the rough match; the exact check below decides.
+        return dao.mostPlayedMatchingArtist("%$wanted%", limit * 3)
+            .filter { song ->
+                com.spotiaisexs.app.util.ArtistHelper.splitArtists(song.artist).any { it.trim().lowercase() == wanted }
+            }
+            .take(limit)
+    }
+
+    /**
+     * The artists the user listened to most in the last [days], by listening
+     * time summed over their songs (main artist only), most listened first.
+     */
+    suspend fun topArtistsSince(days: Int = 90, limit: Int = 8): List<Pair<String, SongPlayStatsEntity>> =
+        mostPlayedSince(days, 500)
+            .mapNotNull { song ->
+                com.spotiaisexs.app.util.ArtistHelper.primaryArtist(song.artist).trim()
+                    .takeIf { it.isNotBlank() }
+                    ?.let { it to song }
+            }
+            .groupBy { it.first.lowercase() }
+            .map { (_, songs) -> songs.first().first to songs.map { it.second } }
+            .sortedByDescending { (_, songs) -> songs.sumOf { it.totalPlayTimeMs } }
+            .take(limit)
+            .map { (artist, songs) -> artist to songs.maxBy { it.totalPlayTimeMs } }
+
     suspend fun skipCountFor(title: String, artist: String): Int =
         dao.find(trackKeyOf(title, artist))?.skipCount ?: 0
 

@@ -50,6 +50,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -69,6 +70,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.spotiaisexs.app.data.music.YouTubeMusicTrack
+import com.spotiaisexs.app.data.thisis.ThisIsPlaylists
 import com.spotiaisexs.app.data.playlist.PlaylistRepository
 import com.spotiaisexs.app.data.repository.SongPlayStatsRepository
 import com.spotiaisexs.app.playback.MusicPlayer
@@ -108,6 +110,10 @@ class RadioHomeViewModel @Inject constructor(
 
     fun deleteSaved(station: SavedStation) = musicPlayer.deleteSavedStation(station.id)
 
+    private val _thisIs = MutableStateFlow<List<ThisIsEntry>>(emptyList())
+    /** The artists the user listens to most lately, each with an "Esto es…" playlist. */
+    val thisIs: StateFlow<List<ThisIsEntry>> = _thisIs.asStateFlow()
+
     private val _recent = MutableStateFlow<List<PlayableTrack>>(emptyList())
     val recent: StateFlow<List<PlayableTrack>> = _recent.asStateFlow()
 
@@ -116,6 +122,9 @@ class RadioHomeViewModel @Inject constructor(
             _recent.value = runCatching { songPlayStats.recentlyPlayed(RECENT_COUNT) }.getOrDefault(emptyList())
                 .filter { it.title.isNotBlank() }
                 .map { PlayableTrack(title = it.title, artist = it.artist, artworkUrl = it.artworkUrl, videoId = it.videoId) }
+            _thisIs.value = runCatching { songPlayStats.topArtistsSince(days = 90, limit = THIS_IS_COUNT) }
+                .getOrDefault(emptyList())
+                .map { (artist, topSong) -> ThisIsEntry(artist, topSong.artworkUrl) }
         }
     }
 
@@ -140,8 +149,12 @@ class RadioHomeViewModel @Inject constructor(
 
     private companion object {
         const val RECENT_COUNT = 9
+        const val THIS_IS_COUNT = 6
     }
 }
+
+/** One "Esto es {artista}" tile; [coverUrl] is the cover of the user's most played song of theirs. */
+data class ThisIsEntry(val artist: String, val coverUrl: String?)
 
 private fun YouTubeMusicTrack.asPlayable() = PlayableTrack(
     title = title,
@@ -169,6 +182,7 @@ fun RadioHomeScreen(
 ) {
     val tuning by viewModel.tuning.collectAsStateWithLifecycle()
     val recent by viewModel.recent.collectAsStateWithLifecycle()
+    val thisIs by viewModel.thisIs.collectAsStateWithLifecycle()
     val savedStations by viewModel.savedStations.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val view = LocalView.current
@@ -362,7 +376,7 @@ fun RadioHomeScreen(
             }
         }
 
-        if (feed.mixes.isNotEmpty() || playlists.isNotEmpty()) {
+        if (thisIs.isNotEmpty() || feed.mixes.isNotEmpty() || playlists.isNotEmpty()) {
             item(key = "playlists") {
                 Column(Modifier.padding(top = 20.dp)) {
                     SectionTitle("Playlists para ti", Modifier.padding(horizontal = 20.dp))
@@ -371,6 +385,15 @@ fun RadioHomeScreen(
                         contentPadding = PaddingValues(horizontal = 20.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
+                        items(thisIs, key = { "thisis:${it.artist}" }) { entry ->
+                            // Prefer a photo of the artist when the feed has one.
+                            val known = feed.topArtists.firstOrNull { it.name.equals(entry.artist, ignoreCase = true) }
+                            ThisIsTile(
+                                artist = entry.artist,
+                                imageUrl = known?.artworkUrl ?: entry.coverUrl,
+                                onClick = { onOpenFeedPlaylist(ThisIsPlaylists.idFor(entry.artist, known?.browseId)) },
+                            )
+                        }
                         items(feed.mixes.distinctBy { it.title }.take(6), key = { "mix:${it.title}" }) { mix ->
                             CoverTile(
                                 title = mix.title,
@@ -559,6 +582,77 @@ private fun CoverTile(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+/**
+ * Cover of an "Esto es" playlist: the artist's picture, darkened at the bottom,
+ * with the name in the big serif and an accent strip, so the series is
+ * recognisable at a glance among the other playlists.
+ */
+@Composable
+private fun ThisIsTile(artist: String, imageUrl: String?, onClick: () -> Unit) {
+    Column(Modifier.width(132.dp).clickable(onClick = onClick)) {
+        Box(
+            Modifier
+                .size(132.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            ArtworkImage(
+                name = artist,
+                artist = artist,
+                embeddedUrl = imageUrl,
+                fallbackIcon = Icons.Filled.Person,
+                modifier = Modifier.matchParentSize(),
+            )
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0.35f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.85f),
+                        ),
+                    ),
+            )
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .width(4.dp)
+                    .height(36.dp)
+                    .background(MaterialTheme.colorScheme.primary),
+            )
+            Column(Modifier.align(Alignment.BottomStart).padding(start = 10.dp, end = 8.dp, bottom = 8.dp)) {
+                Text(
+                    "Esto es",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.85f),
+                )
+                Text(
+                    artist,
+                    style = heroTitle(24),
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Esto es $artist",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            "Sus éxitos y lo tuyo",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Normal,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
     }
 }
 

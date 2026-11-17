@@ -46,6 +46,10 @@ interface SongPlayStatsDao {
     @Query("SELECT * FROM song_play_stats ORDER BY lastPlayedAtMillis DESC LIMIT :limit")
     suspend fun recentlyPlayed(limit: Int): List<SongPlayStatsEntity>
 
+    /** Rough match on the artist text; callers check the exact artist afterwards. */
+    @Query("SELECT * FROM song_play_stats WHERE artist LIKE :pattern ORDER BY totalPlayTimeMs DESC LIMIT :limit")
+    suspend fun mostPlayedMatchingArtist(pattern: String, limit: Int): List<SongPlayStatsEntity>
+
     /** Bulk lookup used by the radio recommender to score a whole candidate pool in one query. */
     @Query("SELECT * FROM song_play_stats WHERE trackKey IN (:keys)")
     suspend fun findAll(keys: List<String>): List<SongPlayStatsEntity>

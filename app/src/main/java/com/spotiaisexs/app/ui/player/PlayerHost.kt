@@ -2699,19 +2699,14 @@ private fun FullPlayer(
                                         }
                                     }
                                     Spacer(Modifier.height(12.dp))
-                                    SeekBar(
+                                    // Design "Dial": the "Cinta" seek bar (proposal P3).
+                                    RibbonSeekBar(
                                         progressState = progressState,
-                                        isPlaying = state.isPlaying,
                                         trackKey = track.videoId ?: "${track.artist}|${track.title}",
-                                        wavyEnabled = wavySeekbarEnabled,
-                                        onSeek = player::seekTo,
-                                        isTranslucent = LocalLiquidGlass.current,
                                         fallbackDurationMs = track.durationMs ?: state.durationMs,
-                                        primaryColor = MaterialTheme.colorScheme.onSurface,
-                                        secondaryColor = MaterialTheme.colorScheme.onSurface,
-                                        tertiaryColor = MaterialTheme.colorScheme.onSurface,
+                                        onSeek = player::seekTo,
                                     )
-                                    Spacer(Modifier.height(10.dp))
+                                    Spacer(Modifier.height(14.dp))
                                     MainControls(state, player, isTranslucent = false)
                                     if (state.isEndlessQueue) {
                                         Spacer(Modifier.height(4.dp))

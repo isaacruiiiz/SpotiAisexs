@@ -32,6 +32,9 @@ sealed interface FeedPlaylistDetailUiState {
         val saveError: String? = null,
         val isLoadingMore: Boolean = false,
         val loadError: String? = null,
+        /** Only for "Esto es": the artist, and which songs come from the user's listening. */
+        val thisIsArtist: String? = null,
+        val mineVideoIds: Set<String> = emptySet(),
     ) : FeedPlaylistDetailUiState
 
     data class Error(val message: String) : FeedPlaylistDetailUiState
@@ -55,7 +58,7 @@ class FeedPlaylistDetailViewModel @Inject constructor(
 
     fun load(playlistId: String, force: Boolean = false) {
         if (playlistId.isBlank()) {
-            _uiState.value = FeedPlaylistDetailUiState.Error("This playlist is unavailable.")
+            _uiState.value = FeedPlaylistDetailUiState.Error("Esta playlist no está disponible.")
             return
         }
         if (!force && playlistId == currentPlaylistId && _uiState.value !is FeedPlaylistDetailUiState.Error) return
@@ -70,8 +73,8 @@ class FeedPlaylistDetailViewModel @Inject constructor(
         loadJob = viewModelScope.launch {
             val liked = playlistId == "yt_liked"
             val recent = playlistId == "yt_recent"
-            val title = if (liked) "Liked on YouTube" else if (recent) "Recently played" else "Playlist"
-            val author = if (liked) "Your favorites" else "YouTube Music"
+            val title = if (liked) "Me gusta en YouTube" else if (recent) "Escuchado hace poco" else "Playlist"
+            val author = if (liked) "Tus favoritas" else "YouTube Music"
             fun showTracks(tracks: List<YouTubeMusicTrack>) {
                 coroutineContext.ensureActive()
                 if (tracks.isEmpty()) return
@@ -99,7 +102,7 @@ class FeedPlaylistDetailViewModel @Inject constructor(
                 coroutineContext.ensureActive()
                 val current = _uiState.value as? FeedPlaylistDetailUiState.Success
                 if (result == null && current == null) {
-                    throw java.io.IOException("Couldn't finish loading this playlist. Tap Retry.")
+                    throw java.io.IOException("No se pudo terminar de cargar la playlist. Reintenta.")
                 }
                 if (result != null) {
                     _uiState.value = FeedPlaylistDetailUiState.Success(
@@ -109,19 +112,19 @@ class FeedPlaylistDetailViewModel @Inject constructor(
                         // an inline retry for the remainder (fixes logged-out
                         // playlists that previously collapsed to a dead Error).
                         isLoadingMore = false,
-                        loadError = if (result.isComplete) null else "Some tracks couldn't load. Retry.",
+                        loadError = if (result.isComplete) null else "Faltan canciones por cargar.",
                     )
                 } else {
                     _uiState.value = current?.copy(
                         isLoadingMore = false,
-                        loadError = "Couldn't refresh playlist. Tap Retry.",
-                    ) ?: FeedPlaylistDetailUiState.Error("Couldn't finish loading this playlist. Tap Retry.")
+                        loadError = "No se pudo actualizar la playlist.",
+                    ) ?: FeedPlaylistDetailUiState.Error("No se pudo terminar de cargar la playlist. Reintenta.")
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 val state = _uiState.value as? FeedPlaylistDetailUiState.Success
-                val message = error.message ?: "Couldn't finish loading. Tap Retry."
+                val message = error.message ?: "No se pudo terminar de cargar. Reintenta."
                 _uiState.value = state?.copy(isLoadingMore = false, loadError = message)
                     ?: FeedPlaylistDetailUiState.Error(message)
             }
@@ -131,9 +134,13 @@ class FeedPlaylistDetailViewModel @Inject constructor(
     /** "Esto es {artista}": built here from the artist's hits and the user's own listening. */
     private suspend fun loadThisIs(playlistId: String) {
         try {
-            val result = thisIsPlaylists.build(playlistId)
+            val detail = thisIsPlaylists.buildDetail(playlistId)
             kotlin.coroutines.coroutineContext.ensureActive()
-            _uiState.value = FeedPlaylistDetailUiState.Success(result)
+            _uiState.value = FeedPlaylistDetailUiState.Success(
+                detail.playlist,
+                thisIsArtist = detail.artistName,
+                mineVideoIds = detail.mineVideoIds,
+            )
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -145,7 +152,7 @@ class FeedPlaylistDetailViewModel @Inject constructor(
         val current = _uiState.value as? FeedPlaylistDetailUiState.Success ?: return
         if (current.isSaving || current.savedToLibrary) return
         if (current.isLoadingMore || current.loadError != null) {
-            _uiState.value = current.copy(saveError = "Finish loading the playlist before saving it.")
+            _uiState.value = current.copy(saveError = "Espera a que cargue entera para guardarla.")
             return
         }
         val playlistId = currentPlaylistId
@@ -158,13 +165,13 @@ class FeedPlaylistDetailViewModel @Inject constructor(
                 val persisted = runCatching { playlistRepository.getById(saved.id) }.getOrNull()
                 if (currentPlaylistId == playlistId) {
                     _uiState.value = if (persisted != null) current.copy(savedToLibrary = true)
-                    else current.copy(saveError = "Couldn't save playlist. Try again.")
+                    else current.copy(saveError = "No se pudo guardar la playlist. Vuelve a intentarlo.")
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
                 if (currentPlaylistId == playlistId) {
-                    _uiState.value = current.copy(saveError = "Couldn't save playlist. Try again.")
+                    _uiState.value = current.copy(saveError = "No se pudo guardar la playlist. Vuelve a intentarlo.")
                 }
             }
         }

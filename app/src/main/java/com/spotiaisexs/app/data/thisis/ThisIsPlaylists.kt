@@ -21,12 +21,23 @@ import javax.inject.Singleton
  * It opens in the same screen as the home's YouTube playlists, under an id
  * made by [idFor]; nothing is stored, it is rebuilt every time it is opened.
  */
+/** An "Esto es" playlist with the artist's name and the ids of the songs that come from the user's listening. */
+data class ThisIsDetail(
+    val playlist: YouTubePlaylistResult,
+    val artistName: String,
+    val mineVideoIds: Set<String>,
+)
+
 @Singleton
 class ThisIsPlaylists @Inject constructor(
     private val artistRepository: ArtistRepository,
     private val stats: SongPlayStatsRepository,
 ) {
-    suspend fun build(id: String): YouTubePlaylistResult = coroutineScope {
+    /** The playlist alone, for callers that only play it. */
+    suspend fun build(id: String): YouTubePlaylistResult = buildDetail(id).playlist
+
+    /** The playlist plus what the screen needs to tell the user's songs from the hits. */
+    suspend fun buildDetail(id: String): ThisIsDetail = coroutineScope {
         val (artist, browseId) = parse(id) ?: throw java.io.IOException("Esta playlist no existe.")
         val pageJob = async { runCatching { artistRepository.getArtistDetails(artist, browseId) }.getOrNull() }
         val mineJob = async { runCatching { stats.mostPlayedByArtist(artist, PERSONAL_LIMIT * 2) }.getOrDefault(emptyList()) }
@@ -39,15 +50,28 @@ class ThisIsPlaylists @Inject constructor(
             .filter { it.skipCount <= it.playCount + 1 }
         val tracks = mix(popular, mine)
         if (tracks.isEmpty()) throw java.io.IOException("No hay canciones de $name para montar la playlist.")
-        YouTubePlaylistResult(
-            id = id,
-            title = "Esto es $name",
-            author = if (mine.isEmpty()) "Sus canciones más escuchadas"
-            else "Sus éxitos y lo que más le escuchas tú",
-            artworkUrl = page?.artworkUrl ?: page?.fallbackArtworkUrl ?: tracks.first().artworkUrl,
-            trackCount = tracks.size,
-            tracks = tracks,
+        ThisIsDetail(
+            playlist = YouTubePlaylistResult(
+                id = id,
+                title = "Esto es $name",
+                author = if (mine.isEmpty()) "Sus canciones más escuchadas"
+                else "Sus éxitos y lo que más le escuchas tú",
+                artworkUrl = page?.artworkUrl ?: page?.fallbackArtworkUrl ?: tracks.first().artworkUrl,
+                trackCount = tracks.size,
+                tracks = tracks,
+            ),
+            artistName = name,
+            mineVideoIds = mineIds(tracks, mine),
         )
+    }
+
+    /**
+     * Which of the [tracks] the user listens to a lot. A song that is on both
+     * lists counts as the user's even when the version kept is the hit's.
+     */
+    internal fun mineIds(tracks: List<YouTubeMusicTrack>, mine: List<SongPlayStatsEntity>): Set<String> {
+        val mineKeys = mine.take(PERSONAL_LIMIT).mapTo(HashSet()) { songKey(it.title) }
+        return tracks.filter { songKey(it.title) in mineKeys }.mapTo(HashSet()) { it.videoId }
     }
 
     /** Alternates the user's favourites and the artist's hits, user first, without repeats. */

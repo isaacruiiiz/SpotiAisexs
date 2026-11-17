@@ -1,11 +1,8 @@
 package com.spotiaisexs.app.ui.artist
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,7 +22,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -33,32 +30,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Album
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material.icons.filled.Verified
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -71,16 +49,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -93,18 +68,32 @@ import com.spotiaisexs.app.data.model.ArtistPageData
 import com.spotiaisexs.app.data.model.ArtistSummaryItem
 import com.spotiaisexs.app.playback.PlayableTrack
 import com.spotiaisexs.app.ui.common.ArtworkImage
+import com.spotiaisexs.app.ui.common.DetailActionRow
+import com.spotiaisexs.app.ui.common.DetailBarButton
+import com.spotiaisexs.app.ui.common.DetailHero
+import com.spotiaisexs.app.ui.common.DetailMeta
+import com.spotiaisexs.app.ui.common.DetailPlayButton
+import com.spotiaisexs.app.ui.common.DetailSectionHeader
+import com.spotiaisexs.app.ui.common.DetailTopBar
+import com.spotiaisexs.app.ui.common.DetailTrackRow
+import com.spotiaisexs.app.ui.common.DialHaptics
 import com.spotiaisexs.app.ui.common.ExpressiveLoadingIndicator
 import com.spotiaisexs.app.ui.common.TrackContextMenuSheet
 import com.spotiaisexs.app.ui.common.TrackMenuCapabilities
 import com.spotiaisexs.app.ui.common.TrackMenuTarget
-import com.spotiaisexs.app.ui.common.safeDrawingBottomPadding
 import com.spotiaisexs.app.ui.common.adaptiveContentWidth
+import com.spotiaisexs.app.ui.common.detailTitleStyle
+import com.spotiaisexs.app.ui.common.safeDrawingBottomPadding
 import com.spotiaisexs.app.ui.genres.GenreExplorer
 import com.spotiaisexs.app.ui.player.LocalMiniPlayerScrollClearance
 import com.spotiaisexs.app.ui.player.LocalMusicPlayer
-import com.spotiaisexs.app.ui.player.PlayingWaveBars
+import com.spotiaisexs.app.ui.radio.DialOutlinedButton
+import com.spotiaisexs.app.util.ArtistHelper
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/** How many of the artist's songs show before "Ver todas". */
+private const val POPULAR_PREVIEW = 5
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ArtistDetailScreen(
     artistName: String,
@@ -119,7 +108,6 @@ fun ArtistDetailScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val musicPlayer = LocalMusicPlayer.current
     val playbackState by musicPlayer.chromeState.collectAsStateWithLifecycle()
-    val haptic = LocalHapticFeedback.current
 
     // System back / predictive-back gesture is owned by the wrapping
     // PredictiveBackScreen in NavGraph (single handler per screen) — the
@@ -132,12 +120,12 @@ fun ArtistDetailScreen(
     var selectedTrackMenu by remember { mutableStateOf<PlayableTrack?>(null) }
     var showAllSongs by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
-
+    val heroEnd = with(LocalDensity.current) { 240.dp.toPx() }
     val showScrolledHeader by remember {
-        derivedStateOf {
-            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 240
-        }
+        derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > heroEnd }
     }
+    val statusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val success = uiState as? ArtistUiState.Success
 
     Box(
         modifier = Modifier
@@ -147,274 +135,101 @@ fun ArtistDetailScreen(
         when (val state = uiState) {
             is ArtistUiState.Loading -> {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    ExpressiveLoadingIndicator(message = "Loading $artistName...")
+                    ExpressiveLoadingIndicator(message = "Abriendo a $artistName…")
                 }
             }
             is ArtistUiState.Error -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                        Text(
-                            text = state.message,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        Button(onClick = { viewModel.loadArtist(artistName, browseId) }) {
-                            Text("Retry")
-                        }
-                    }
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = state.message,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(18.dp))
+                    DialOutlinedButton(
+                        "Reintentar",
+                        onClick = { viewModel.loadArtist(artistName, browseId) },
+                        accent = true,
+                    )
                 }
             }
             is ArtistUiState.Success -> {
                 val data = state.data
-                val isArtistPlaying = playbackState.isPlaying &&
-                    (playbackState.sourceLabel == data.name || playbackState.current?.artist.equals(data.name, ignoreCase = true))
-
-                // Ambient Backdrop Mesh Gradient
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(380.dp)
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
-                                    MaterialTheme.colorScheme.secondary.copy(alpha = 0.08f),
-                                    Color.Transparent,
-                                ),
-                                startY = 0f,
-                                endY = 1000f,
-                            ),
-                        ),
-                )
+                val displayName = ArtistHelper.primaryArtist(data.name)
+                val isArtistSource = playbackState.current != null && playbackState.sourceLabel == data.name
+                val isArtistPlaying = isArtistSource && playbackState.isPlaying
 
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 56.dp,
                         bottom = 24.dp + LocalMiniPlayerScrollClearance.current + safeDrawingBottomPadding(),
                     ),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier
                         .fillMaxSize()
                         .adaptiveContentWidth(maxWidth = 860.dp)
                         .align(Alignment.TopCenter),
                 ) {
-                    // 1. Artist Hero Section
+                    // 1. The photo from edge to edge, with the name on the fade.
                     item(key = "artist_hero") {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                        DetailHero(
+                            height = 360.dp + statusBar,
+                            scrollOffset = {
+                                if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else 0f
+                            },
+                            image = { ArtistPhoto(data) },
                         ) {
-                            // Full-width Hero Cover Banner with gradient scrim
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(260.dp)
-                                    .shadow(
-                                        elevation = 16.dp,
-                                        shape = RoundedCornerShape(28.dp),
-                                        ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                                        spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                                    )
-                                    .clip(RoundedCornerShape(28.dp)),
-                            ) {
-                                val artworkCandidates = remember(data) {
-                                    listOfNotNull(data.artworkUrl, data.bannerUrl, data.fallbackArtworkUrl)
-                                        .filter(com.spotiaisexs.app.data.artwork.ArtworkNormalizer::isRealImage).distinct()
-                                }
-                                var artworkIndex by remember(data) { mutableStateOf(0) }
-                                val artistArtwork = artworkCandidates.getOrNull(artworkIndex)
-                                if (artistArtwork != null) {
-                                    AsyncImage(
-                                        model = artistArtwork,
-                                        contentDescription = data.name,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize(),
-                                        onError = { artworkIndex++ },
-                                    )
-                                } else {
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                        modifier = Modifier.fillMaxSize(),
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                Icons.Filled.Person,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(96.dp),
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // Dark gradient overlay at the base of the hero
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(
-                                            Brush.verticalGradient(
-                                                colors = listOf(
-                                                    Color.Transparent,
-                                                    Color.Black.copy(alpha = 0.4f),
-                                                    Color.Black.copy(alpha = 0.85f),
-                                                ),
-                                                startY = 100f,
-                                            ),
-                                        ),
-                                )
-
-                                if (isArtistPlaying) {
-                                    Surface(
-                                        shape = RoundedCornerShape(topStart = 14.dp, bottomEnd = 28.dp),
-                                        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.92f),
-                                        tonalElevation = 4.dp,
-                                        modifier = Modifier.align(Alignment.BottomEnd),
-                                    ) {
-                                        PlayingWaveBars(
-                                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
-                                            containerColor = Color.Transparent,
-                                            waveColor = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-                                }
-
-                                // Artist Title & Stats overlaid on hero
-                                Column(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomStart)
-                                        .padding(start = 18.dp, bottom = 18.dp, top = 18.dp, end = if (isArtistPlaying) 72.dp else 18.dp),
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text(
-                                            text = com.spotiaisexs.app.util.ArtistHelper.primaryArtist(data.name),
-                                            style = MaterialTheme.typography.headlineLarge,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = Color.White,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Icon(
-                                            Icons.Filled.Verified,
-                                            contentDescription = "Verified Artist",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(24.dp),
-                                        )
-                                    }
-
-                                    if (!data.subscribers.isNullOrBlank() || !data.monthlyListeners.isNullOrBlank()) {
-                                        Spacer(Modifier.height(4.dp))
-                                        Surface(
-                                            shape = RoundedCornerShape(50),
-                                            color = Color.White.copy(alpha = 0.18f),
-                                        ) {
-                                            Text(
-                                                text = data.subscribers ?: data.monthlyListeners.orEmpty(),
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = Color.White,
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            Spacer(Modifier.height(16.dp))
-
-                            // Native Music App Action Bar (Shuffle, Radio, Primary Play FAB)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    FilledTonalIconButton(
-                                        onClick = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            viewModel.playShuffle()
-                                        },
-                                        enabled = data.topSongs.isNotEmpty(),
-                                        shape = CircleShape,
-                                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                        ),
-                                        modifier = Modifier.size(48.dp),
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.Shuffle,
-                                            contentDescription = "Shuffle Artist",
-                                            modifier = Modifier.size(22.dp),
-                                            tint = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-
-                                    FilledTonalIconButton(
-                                        onClick = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            viewModel.startArtistMix()
-                                        },
-                                        shape = CircleShape,
-                                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                        ),
-                                        modifier = Modifier.size(48.dp),
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.Radio,
-                                            contentDescription = "Artist Radio",
-                                            modifier = Modifier.size(22.dp),
-                                            tint = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-                                }
-
-                                // Large Floating Primary Play Button (56dp circle)
-                                Surface(
-                                    onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        viewModel.playAll()
-                                    },
-                                    enabled = data.topSongs.isNotEmpty(),
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                                    shadowElevation = 6.dp,
-                                    modifier = Modifier.size(56.dp),
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            if (isArtistPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                            contentDescription = "Play Artist",
-                                            tint = MaterialTheme.colorScheme.onPrimary,
-                                            modifier = Modifier.size(30.dp),
-                                        )
-                                    }
-                                }
-                            }
+                            Text(
+                                displayName,
+                                style = detailTitleStyle(displayName),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
 
+                    (data.subscribers ?: data.monthlyListeners)?.takeIf(String::isNotBlank)?.let { audience ->
+                        item(key = "artist_audience") { DetailMeta(audienceLabel(audience)) }
+                    }
 
-                    // "Esto es {artista}": their hits mixed with what the user plays most of them.
+                    item(key = "artist_actions") {
+                        DetailActionRow {
+                            DialOutlinedButton(
+                                text = "Emisora",
+                                onClick = viewModel::startArtistMix,
+                                accent = true,
+                                leading = { Icon(Icons.Filled.Radio, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                            )
+                            if (data.topSongs.isNotEmpty()) {
+                                DialOutlinedButton(
+                                    text = "Aleatorio",
+                                    onClick = viewModel::playShuffle,
+                                    leading = { Icon(Icons.Filled.Shuffle, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                )
+                            }
+                            Spacer(Modifier.weight(1f))
+                            DetailPlayButton(
+                                playing = isArtistPlaying,
+                                description = if (isArtistPlaying) "Pausar" else "Reproducir a $displayName",
+                                enabled = data.topSongs.isNotEmpty(),
+                                onClick = { if (isArtistSource) musicPlayer.togglePlayPause() else viewModel.playAll() },
+                            )
+                        }
+                    }
+
+                    // 2. "Esto es {artista}": their hits mixed with what the user plays most of them.
                     if (data.topSongs.isNotEmpty()) {
                         item(key = "artist_this_is") {
-                            Surface(
+                            ThisIsCard(
+                                data = data,
+                                displayName = displayName,
                                 onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     onOpenThisIs(
                                         com.spotiaisexs.app.data.thisis.ThisIsPlaylists.idFor(
                                             data.name,
@@ -422,354 +237,101 @@ fun ArtistDetailScreen(
                                         ),
                                     )
                                 },
-                                shape = RoundedCornerShape(10.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainer,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Row(
-                                    Modifier.padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Box(
-                                        Modifier
-                                            .size(56.dp)
-                                            .clip(RoundedCornerShape(6.dp)),
-                                    ) {
-                                        com.spotiaisexs.app.ui.common.ArtworkImage(
-                                            name = data.name,
-                                            artist = data.name,
-                                            embeddedUrl = data.artworkUrl ?: data.fallbackArtworkUrl,
-                                            fallbackIcon = Icons.Filled.Person,
-                                            modifier = Modifier.matchParentSize(),
-                                        )
-                                        Box(
-                                            Modifier
-                                                .align(Alignment.TopStart)
-                                                .size(width = 3.dp, height = 20.dp)
-                                                .background(MaterialTheme.colorScheme.primary),
-                                        )
-                                    }
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            "Esto es ${data.name}",
-                                            style = com.spotiaisexs.app.ui.theme.heroTitle(24),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Text(
-                                            "Sus éxitos mezclados con lo que más le escuchas",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-                                    Icon(
-                                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
+                            )
                         }
                     }
 
-                    // 2. Genre Tags & Bio
-                    if (data.tags.isNotEmpty() || !data.bio.isNullOrBlank()) {
-                        item(key = "artist_tags_bio") {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (data.tags.isNotEmpty()) {
-                                    FlowRow(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                                        modifier = Modifier.fillMaxWidth(),
-                                    ) {
-                                        data.tags.take(6).forEach { tag ->
-                                            AssistChip(
-                                                onClick = { genreBridge.genreExplorer.explore(tag) },
-                                                label = { Text(tag) },
-                                                shape = RoundedCornerShape(12.dp),
-                                                colors = AssistChipDefaults.assistChipColors(
-                                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                                ),
-                                            )
-                                        }
-                                    }
-                                }
-
-                                if (!data.bio.isNullOrBlank()) {
-                                    var isBioExpanded by remember { mutableStateOf(false) }
-                                    Card(
-                                        shape = RoundedCornerShape(20.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                                        modifier = Modifier.fillMaxWidth(),
-                                    ) {
-                                        Column(Modifier.padding(16.dp)) {
-                                            Text(
-                                                text = "About",
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary,
-                                            )
-                                            Spacer(Modifier.height(6.dp))
-                                            Text(
-                                                text = data.bio,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                lineHeight = MaterialTheme.typography.bodyMedium.lineHeight,
-                                                maxLines = if (isBioExpanded) Int.MAX_VALUE else 4,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                            if (data.bio.length > 120) {
-                                                Spacer(Modifier.height(6.dp))
-                                                Text(
-                                                    text = if (isBioExpanded) "Show less" else "... Read more",
-                                                    style = MaterialTheme.typography.labelLarge,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                        .clickable {
-                                                            isBioExpanded = !isBioExpanded
-                                                        }
-                                                        .padding(vertical = 2.dp),
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 3. Top Songs Section Header
+                    // 3. Their songs, numbered.
                     if (data.topSongs.isNotEmpty()) {
-                        val initialDisplayLimit = 10
-                        val visibleSongs = if (showAllSongs || data.topSongs.size <= initialDisplayLimit) {
-                            data.topSongs
-                        } else {
-                            data.topSongs.take(initialDisplayLimit)
-                        }
+                        val visibleSongs = if (showAllSongs) data.topSongs else data.topSongs.take(POPULAR_PREVIEW)
 
-                        item(key = "top_songs_header") {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp, bottom = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = "Songs",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                            }
-                        }
+                        item(key = "top_songs_header") { DetailSectionHeader("Populares") }
 
-                        // Top Songs List
                         itemsIndexed(
                             visibleSongs,
                             key = { index, track -> "${track.videoId ?: track.title}_$index" },
                             contentType = { _, _ -> "artist_top_song" },
                         ) { index, track ->
-                            val isPlayingThis = playbackState.isPlaying &&
-                                playbackState.current?.title.equals(track.title, ignoreCase = true) &&
+                            val isPlayingThis = playbackState.current?.title.equals(track.title, ignoreCase = true) &&
                                 playbackState.current?.artist.equals(track.artist, ignoreCase = true)
-
-                            Surface(
-                                shape = RoundedCornerShape(16.dp),
-                                color = if (isPlayingThis) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                                else MaterialTheme.colorScheme.surfaceContainerLow,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        val fullIndex = data.topSongs.indexOf(track).takeIf { it >= 0 } ?: index
-                                        viewModel.playAll(startIndex = fullIndex)
-                                    },
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    // Track number / Artwork
-                                    Box(
-                                        modifier = Modifier
-                                            .size(48.dp)
-                                            .clip(RoundedCornerShape(12.dp)),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        ArtworkImage(
-                                            name = track.title,
-                                            artist = com.spotiaisexs.app.util.ArtistHelper.primaryArtist(track.artist),
-                                            embeddedUrl = track.artworkUrl,
-                                            fallbackIcon = Icons.Filled.MusicNote,
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-                                        if (isPlayingThis) {
-                                            PlayingWaveBars(
-                                                modifier = Modifier
-                                                    .align(Alignment.BottomEnd)
-                                                    .padding(2.dp)
-                                                    .size(24.dp, 18.dp),
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(Modifier.width(14.dp))
-
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            text = track.title,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            fontWeight = if (isPlayingThis) FontWeight.Bold else FontWeight.SemiBold,
-                                            color = if (isPlayingThis) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Spacer(Modifier.height(2.dp))
-                                        Text(
-                                            text = track.album ?: com.spotiaisexs.app.util.ArtistHelper.primaryArtist(track.artist).ifBlank { com.spotiaisexs.app.util.ArtistHelper.primaryArtist(data.name) },
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-
-                                    IconButton(
-                                        onClick = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            selectedTrackMenu = track
-                                        },
-                                        modifier = Modifier.size(36.dp),
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.MoreVert,
-                                            contentDescription = "Options",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(20.dp),
-                                        )
-                                    }
-                                }
-                            }
+                            DetailTrackRow(
+                                title = track.title,
+                                subtitle = track.album?.takeIf(String::isNotBlank)
+                                    ?: ArtistHelper.primaryArtist(track.artist).ifBlank { displayName },
+                                artworkUrl = track.artworkUrl,
+                                artworkArtist = ArtistHelper.primaryArtist(track.artist),
+                                playing = isPlayingThis,
+                                index = index + 1,
+                                onClick = { viewModel.playAll(startIndex = index) },
+                                onLongClick = { selectedTrackMenu = track },
+                                onMenu = { selectedTrackMenu = track },
+                                onQueue = { musicPlayer.addToQueue(track) },
+                            )
                         }
 
-                        if (data.topSongs.size > initialDisplayLimit) {
+                        if (data.topSongs.size > POPULAR_PREVIEW) {
                             item(key = "top_songs_toggle_button") {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 8.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                ) {
-                                    Surface(
-                                        onClick = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            showAllSongs = !showAllSongs
-                                        },
-                                        shape = RoundedCornerShape(24.dp),
-                                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                Box(Modifier.padding(start = 20.dp, top = 12.dp)) {
+                                    DialOutlinedButton(
+                                        text = if (showAllSongs) "Ver menos" else "Ver las ${data.topSongs.size} canciones",
+                                        onClick = { showAllSongs = !showAllSongs },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 4. Albums
+                    if (data.albums.isNotEmpty()) {
+                        item(key = "albums_header") { DetailSectionHeader("Álbumes") }
+                        item(key = "albums_row") {
+                            ReleaseShelf(data.albums) { album ->
+                                onOpenAlbum(album.title, displayName, album.browseId)
+                            }
+                        }
+                    }
+
+                    // 5. Singles & EPs
+                    if (data.singles.isNotEmpty()) {
+                        item(key = "singles_header") { DetailSectionHeader("Sencillos y EP") }
+                        item(key = "singles_row") {
+                            ReleaseShelf(data.singles) { single ->
+                                onOpenAlbum(single.title, displayName, single.browseId)
+                            }
+                        }
+                    }
+
+                    // 6. Genre tags & bio
+                    if (data.tags.isNotEmpty() || !data.bio.isNullOrBlank()) {
+                        item(key = "artist_tags_bio_header") { DetailSectionHeader("Acerca de") }
+                        item(key = "artist_tags_bio") {
+                            Column(
+                                Modifier.padding(horizontal = 20.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                if (data.tags.isNotEmpty()) {
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.fillMaxWidth(),
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        ) {
-                                            Text(
-                                                text = if (showAllSongs) "Show less" else "Show all songs",
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.primary,
-                                            )
-                                            Icon(
-                                                imageVector = if (showAllSongs) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(20.dp),
-                                            )
+                                        data.tags.take(6).forEach { tag ->
+                                            DialOutlinedButton(tag, onClick = { genreBridge.genreExplorer.explore(tag) })
                                         }
                                     }
                                 }
+                                data.bio?.takeIf(String::isNotBlank)?.let { bio -> ArtistBio(bio) }
                             }
                         }
                     }
 
-                    // 4. Albums Carousel
-                    if (data.albums.isNotEmpty()) {
-                        item(key = "albums_header") {
-                            Text(
-                                text = "Albums",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(top = 10.dp),
-                            )
-                        }
-
-                        item(key = "albums_row") {
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp),
-                            ) {
-                                items(data.albums, key = { it.browseId.ifBlank { it.title } }) { album ->
-                                    ArtistAlbumCard(
-                                        item = album,
-                                        onClick = {
-                                            onOpenAlbum(album.title, com.spotiaisexs.app.util.ArtistHelper.primaryArtist(data.name), album.browseId)
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // 5. Singles & EPs Carousel
-                    if (data.singles.isNotEmpty()) {
-                        item(key = "singles_header") {
-                            Text(
-                                text = "Singles & EPs",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(top = 10.dp),
-                            )
-                        }
-
-                        item(key = "singles_row") {
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp),
-                            ) {
-                                items(data.singles, key = { it.browseId.ifBlank { it.title } }) { single ->
-                                    ArtistAlbumCard(
-                                        item = single,
-                                        onClick = {
-                                            onOpenAlbum(single.title, com.spotiaisexs.app.util.ArtistHelper.primaryArtist(data.name), single.browseId)
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // 6. Similar Artists Carousel
+                    // 7. Similar artists
                     if (data.similarArtists.isNotEmpty()) {
-                        item(key = "similar_artists_header") {
-                            Text(
-                                text = "Fans Also Like",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(top = 10.dp),
-                            )
-                        }
-
+                        item(key = "similar_artists_header") { DetailSectionHeader("Artistas parecidos") }
                         item(key = "similar_artists_row") {
                             val individualArtists = remember(data.similarArtists) {
                                 data.similarArtists.flatMap { item ->
-                                    val split = com.spotiaisexs.app.util.ArtistHelper.splitArtists(item.name)
+                                    val split = ArtistHelper.splitArtists(item.name)
                                     if (split.size <= 1) listOf(item)
                                     else split.map { singleName ->
                                         item.copy(name = singleName, browseId = "")
@@ -778,14 +340,12 @@ fun ArtistDetailScreen(
                             }
                             LazyRow(
                                 horizontalArrangement = Arrangement.spacedBy(14.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp),
+                                contentPadding = PaddingValues(horizontal = 20.dp),
                             ) {
                                 items(individualArtists, key = { it.browseId.ifBlank { it.name } }) { artist ->
                                     SimilarArtistCard(
                                         artist = artist,
-                                        onClick = {
-                                            onOpenArtist(com.spotiaisexs.app.util.ArtistHelper.primaryArtist(artist.name), artist.browseId)
-                                        },
+                                        onClick = { onOpenArtist(ArtistHelper.primaryArtist(artist.name), artist.browseId) },
                                     )
                                 }
                             }
@@ -795,74 +355,21 @@ fun ArtistDetailScreen(
             }
         }
 
-        Surface(
-            color = if (showScrolledHeader) MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.98f) else Color.Transparent,
-            tonalElevation = if (showScrolledHeader) 4.dp else 0.dp,
-            shadowElevation = if (showScrolledHeader) 6.dp else 0.dp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .zIndex(10f)
-                .align(Alignment.TopCenter),
+        DetailTopBar(
+            title = ArtistHelper.primaryArtist(success?.data?.name ?: artistName),
+            // Without a photo behind it the bar has nothing to float on.
+            scrolled = showScrolledHeader || success == null,
+            onBack = onBack,
+            modifier = Modifier.align(Alignment.TopCenter),
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .adaptiveContentWidth(maxWidth = 860.dp)
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier.size(44.dp),
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    AnimatedVisibility(
-                        visible = showScrolledHeader,
-                        enter = fadeIn() + scaleIn(initialScale = 0.9f),
-                        exit = fadeOut() + scaleOut(targetScale = 0.9f),
-                    ) {
-                        Text(
-                            text = com.spotiaisexs.app.util.ArtistHelper.primaryArtist((uiState as? ArtistUiState.Success)?.data?.name ?: artistName),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-
-                // Quick Play Button on Scroll
-                AnimatedVisibility(
-                    visible = showScrolledHeader && (uiState as? ArtistUiState.Success)?.data?.topSongs?.isNotEmpty() == true,
-                    enter = fadeIn() + scaleIn(),
-                    exit = fadeOut() + scaleOut(),
-                ) {
-                    FilledTonalIconButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            viewModel.playAll()
-                        },
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        ),
-                        modifier = Modifier.size(38.dp),
-                    ) {
-                        Icon(Icons.Filled.PlayArrow, contentDescription = "Play", modifier = Modifier.size(22.dp))
-                    }
-                }
+            if (showScrolledHeader && success?.data?.topSongs?.isNotEmpty() == true) {
+                DetailBarButton(
+                    icon = Icons.Filled.PlayArrow,
+                    description = "Reproducir",
+                    scrolled = true,
+                    active = true,
+                    onClick = { viewModel.playAll() },
+                )
             }
         }
     }
@@ -879,65 +386,209 @@ fun ArtistDetailScreen(
     }
 }
 
+/**
+ * YouTube Music gives a bare count ("2,12 M"), Last.fm a count with the word
+ * "listeners": say what is being counted, in Spanish.
+ */
+private fun audienceLabel(raw: String): String {
+    val text = raw.trim()
+    return when {
+        text.endsWith(" listeners") -> text.removeSuffix(" listeners") + " oyentes"
+        // More than a magnitude ("M", "mil", "mill."): the text already says what it counts.
+        text.count(Char::isLetter) > 4 -> text
+        else -> "$text de suscriptores"
+    }
+}
+
+/** The artist's picture, trying the next candidate when one fails to load. */
+@Composable
+private fun ArtistPhoto(data: ArtistPageData) {
+    val candidates = remember(data) {
+        listOfNotNull(data.artworkUrl, data.bannerUrl, data.fallbackArtworkUrl)
+            .filter(com.spotiaisexs.app.data.artwork.ArtworkNormalizer::isRealImage).distinct()
+    }
+    var candidateIndex by remember(data) { mutableStateOf(0) }
+    val url = candidates.getOrNull(candidateIndex)
+    if (url != null) {
+        AsyncImage(
+            model = url,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            alignment = Alignment.TopCenter,
+            modifier = Modifier.fillMaxSize(),
+            onError = { candidateIndex++ },
+        )
+    } else {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Person,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(96.dp),
+            )
+        }
+    }
+}
+
+/** Entry to "Esto es {artista}": the artist's picture with a strip of the accent, like its cover. */
+@Composable
+private fun ThisIsCard(data: ArtistPageData, displayName: String, onClick: () -> Unit) {
+    val view = LocalView.current
+    Surface(
+        onClick = {
+            DialHaptics.click(view)
+            onClick()
+        },
+        shape = RoundedCornerShape(8.dp),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, top = 16.dp),
+    ) {
+        Row(
+            Modifier
+                .defaultMinSize(minHeight = 68.dp)
+                .padding(start = 10.dp, end = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+            ) {
+                ArtworkImage(
+                    name = data.name,
+                    artist = data.name,
+                    embeddedUrl = data.artworkUrl ?: data.fallbackArtworkUrl,
+                    fallbackIcon = Icons.Filled.Person,
+                    modifier = Modifier.matchParentSize(),
+                )
+                Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Esto es $displayName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "Sus éxitos y lo que más le escuchas tú",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 6.dp),
+            )
+        }
+    }
+}
+
+/** The bio, four lines at first. */
+@Composable
+private fun ArtistBio(bio: String) {
+    var expanded by remember(bio) { mutableStateOf(false) }
+    Column {
+        Text(
+            text = bio,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = if (expanded) Int.MAX_VALUE else 4,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (bio.length > 120) {
+            Text(
+                text = if (expanded) "Leer menos" else "Leer más",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clickable(role = Role.Button) { expanded = !expanded }
+                    .defaultMinSize(minHeight = 44.dp)
+                    .padding(vertical = 12.dp),
+            )
+        }
+    }
+}
+
+/** A row of releases that scrolls sideways. */
+@Composable
+private fun ReleaseShelf(releases: List<ArtistAlbumItem>, onOpen: (ArtistAlbumItem) -> Unit) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(horizontal = 20.dp),
+    ) {
+        items(releases, key = { it.browseId.ifBlank { it.title } }) { release ->
+            ArtistAlbumCard(item = release, onClick = { onOpen(release) })
+        }
+    }
+}
+
+/** "Album" / "Single" as YouTube Music names them, in Spanish, followed by the year. */
+private fun releaseLabel(item: ArtistAlbumItem): String {
+    val raw = item.type?.trim().orEmpty()
+    val type = when (raw.lowercase()) {
+        "", "album" -> "Álbum"
+        "single" -> "Sencillo"
+        else -> raw
+    }
+    return listOfNotNull(type, item.year?.takeIf(String::isNotBlank)).joinToString(", ")
+}
+
 @Composable
 private fun ArtistAlbumCard(
     item: ArtistAlbumItem,
     onClick: () -> Unit,
 ) {
-    Card(
-        onClick = onClick,
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier = Modifier.width(150.dp),
+    Column(
+        Modifier
+            .width(132.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(role = Role.Button, onClick = onClick),
     ) {
-        Column(Modifier.padding(10.dp)) {
-            Box(
-                modifier = Modifier
-                    .size(130.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-            ) {
-                ArtworkImage(
-                    name = item.title,
-                    artist = "",
-                    embeddedUrl = item.artworkUrl,
-                    fallbackIcon = Icons.Filled.Album,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                if (!item.year.isNullOrBlank()) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color.Black.copy(alpha = 0.65f),
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(6.dp),
-                    ) {
-                        Text(
-                            text = item.year,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            Text(
-                text = item.title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = item.type ?: "Album",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-        }
+        ArtworkImage(
+            name = item.title,
+            artist = "",
+            embeddedUrl = item.artworkUrl,
+            fallbackIcon = Icons.Filled.Album,
+            modifier = Modifier
+                .size(132.dp)
+                .clip(RoundedCornerShape(6.dp)),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = item.title,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = releaseLabel(item),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -946,52 +597,41 @@ private fun SimilarArtistCard(
     artist: ArtistSummaryItem,
     onClick: () -> Unit,
 ) {
-    Card(
-        onClick = onClick,
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier = Modifier.width(130.dp),
+    val name = ArtistHelper.primaryArtist(artist.name)
+    Column(
+        modifier = Modifier
+            .width(104.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(role = Role.Button, onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(
-            modifier = Modifier.padding(10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+        Box(
+            modifier = Modifier
+                .size(104.dp)
+                .clip(CircleShape)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(90.dp)
-                    .clip(CircleShape),
-            ) {
-                if (!artist.artworkUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = artist.artworkUrl,
-                        contentDescription = com.spotiaisexs.app.util.ArtistHelper.primaryArtist(artist.name),
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Filled.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                }
+            if (!artist.artworkUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = artist.artworkUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(Icons.Filled.Person, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-
-            Spacer(Modifier.height(8.dp))
-
-            Text(
-                text = com.spotiaisexs.app.util.ArtistHelper.primaryArtist(artist.name),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

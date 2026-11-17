@@ -4,18 +4,6 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,11 +11,9 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,14 +30,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CloudSync
@@ -61,16 +44,11 @@ import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
@@ -79,12 +57,9 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -103,17 +78,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -128,7 +102,16 @@ import com.spotiaisexs.app.data.playlist.LIKED_SONGS_MODE
 import com.spotiaisexs.app.data.playlist.SavedPlaylist
 import com.spotiaisexs.app.data.playlist.isYouTubeOnly
 import com.spotiaisexs.app.playback.toPlayableTrack
-import com.spotiaisexs.app.ui.common.ArtworkImage
+import com.spotiaisexs.app.ui.common.DetailActionRow
+import com.spotiaisexs.app.ui.common.DetailBarButton
+import com.spotiaisexs.app.ui.common.DetailHero
+import com.spotiaisexs.app.ui.common.DetailMeta
+import com.spotiaisexs.app.ui.common.DetailPlayButton
+import com.spotiaisexs.app.ui.common.DetailTopBar
+import com.spotiaisexs.app.ui.common.DetailTrackRow
+import com.spotiaisexs.app.ui.common.detailTitleStyle
+import com.spotiaisexs.app.ui.common.songCountLabel
+import com.spotiaisexs.app.ui.radio.DialOutlinedButton
 import com.spotiaisexs.app.ui.common.ExpressiveLoadingIndicator
 import com.spotiaisexs.app.ui.common.PlaylistCover
 import com.spotiaisexs.app.ui.common.TrackContextMenuSheet
@@ -136,7 +119,6 @@ import com.spotiaisexs.app.ui.common.TrackMenuCapabilities
 import com.spotiaisexs.app.ui.common.TrackMenuTarget
 import com.spotiaisexs.app.ui.common.adaptiveContentWidth
 import com.spotiaisexs.app.ui.shell.FloatingNavDefaults
-import com.spotiaisexs.app.ui.theme.ArtworkShape
 import com.spotiaisexs.app.ui.theme.ExpressivePillShape
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.text.SimpleDateFormat
@@ -145,11 +127,11 @@ import java.util.Locale
 import javax.inject.Inject
 
 enum class PlaylistTrackSort(val label: String) {
-    CUSTOM("Custom order"),
-    DATE_ADDED("Date added"),
-    NAME("Name"),
-    ARTIST("Artist"),
-    PLAY_TIME("Play time"),
+    CUSTOM("Orden personalizado"),
+    DATE_ADDED("Fecha de añadido"),
+    NAME("Título"),
+    ARTIST("Artista"),
+    PLAY_TIME("Más escuchadas"),
 }
 
 private fun formatDate(millis: Long): String =
@@ -192,7 +174,7 @@ fun PlaylistDetailScreen(
 
     if (playlist == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            ExpressiveLoadingIndicator(message = "Loading playlist...")
+            ExpressiveLoadingIndicator(message = "Cargando la playlist…")
         }
         return
     }
@@ -294,17 +276,26 @@ fun PlaylistDetailScreen(
             dragOffsetY = 0f
         }
     }
-    val scrollOffset by remember {
-        derivedStateOf {
-            if (listState.firstVisibleItemIndex == 0) {
-                listState.firstVisibleItemScrollOffset.toFloat()
-            } else 600f
-        }
-    }
+    val density = LocalDensity.current
+    // The bar turns solid once most of the cover has scrolled away.
+    val heroEnd = with(density) { 240.dp.toPx() }
     val showScrolledHeader by remember {
         derivedStateOf {
-            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 240
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > heroEnd
         }
+    }
+
+    // The queue carries the playlist's title as its label: that is how we know it is this one sounding.
+    val isThisSource = playbackState.current != null && playbackState.sourceLabel == playlist.title
+    val statusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val songCount = if (playlist.isYouTubeOnly) playlist.remoteTrackCount ?: playlist.tracks.size else playlist.tracks.size
+    fun locatePlayingSong() {
+        val playingTrack = playbackState.current ?: return
+        val index = displayTracks.indexOfFirst {
+            it.name.equals(playingTrack.title, ignoreCase = true) && it.artist.equals(playingTrack.artist, ignoreCase = true)
+        }
+        // +1 for the hero section
+        if (index >= 0) dragScope.launch { listState.animateScrollToItem(index + 1) }
     }
 
     Box(
@@ -312,143 +303,79 @@ fun PlaylistDetailScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        // 1. Full-Bleed Cover Art Background at Top with smooth parallax physics
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(440.dp)
-                .graphicsLayer {
-                    translationY = -scrollOffset * 0.45f
-                    alpha = (1f - (scrollOffset / 520f)).coerceIn(0.1f, 1f)
-                    val zoom = 1f + (-scrollOffset.coerceAtMost(0f) / 600f)
-                    scaleX = zoom
-                    scaleY = zoom
-                },
-        ) {
-            PlaylistCover(
-                playlist = playlist,
-                modifier = Modifier.fillMaxSize(),
-                cornerRadius = 0.dp,
-            )
-            // Multi-stop cinematic dark gradient overlay
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colorStops = arrayOf(
-                                0.0f to Color.Black.copy(alpha = 0.55f),
-                                0.30f to Color.Black.copy(alpha = 0.20f),
-                                0.60f to Color.Black.copy(alpha = 0.55f),
-                                0.85f to MaterialTheme.colorScheme.background.copy(alpha = 0.90f),
-                                1.0f to MaterialTheme.colorScheme.background,
-                            ),
-                        ),
-                    ),
-            )
-        }
-
         LazyColumn(
             state = listState,
-            contentPadding = PaddingValues(
-                start = 16.dp,
-                end = 16.dp,
-                top = 0.dp,
-                bottom = FloatingNavDefaults.contentBottomPadding(),
-            ),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            contentPadding = PaddingValues(bottom = FloatingNavDefaults.contentBottomPadding()),
             modifier = Modifier
                 .fillMaxSize()
                 .adaptiveContentWidth(maxWidth = 860.dp)
                 .align(Alignment.TopCenter),
         ) {
-            // Hero Header Section
+            // Everything above the songs is ONE item: the reorder drag counts
+            // on the songs starting at list position 1.
             item(key = "hero_section") {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 150.dp)
-                        .padding(horizontal = 4.dp),
-                ) {
-                    // Big Bold Playlist Title (overlaid in hero)
-                    Text(
-                        text = playlist.title,
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-
-                    Spacer(Modifier.height(8.dp))
-
-                    // Metadata line (tracks count & date)
-                    Text(
-                        text = if (playlist.isYouTubeOnly) {
-                            playlist.remoteTrackCount?.let { "$it songs • YouTube Music" } ?: "YouTube Music"
-                        } else {
-                            "${playlist.tracks.size} songs \u2022 ${formatDate(playlist.createdAtMillis)}"
+                Column(Modifier.fillMaxWidth()) {
+                    // The cover from edge to edge, with the title on the fade.
+                    DetailHero(
+                        height = 340.dp + statusBar,
+                        scrollOffset = {
+                            if (listState.firstVisibleItemIndex == 0) listState.firstVisibleItemScrollOffset.toFloat() else 0f
                         },
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        image = {
+                            PlaylistCover(
+                                playlist = playlist,
+                                modifier = Modifier.fillMaxSize(),
+                                cornerRadius = 0.dp,
+                            )
+                        },
+                    ) {
+                        Text(
+                            text = playlist.title,
+                            style = detailTitleStyle(playlist.title),
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+
+                    DetailMeta(
+                        (if (playlist.isYouTubeOnly) "YouTube Music" else "Playlist") + ", " + songCountLabel(songCount),
                     )
 
-                    Spacer(Modifier.height(18.dp))
-
-                    // Hero Action Buttons (Shuffle • Big Play Pill)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        // Circular Shuffle Button
-                        FilledTonalIconButton(
+                    // Outlined actions on the left, the one filled button (play) on the right.
+                    DetailActionRow {
+                        DialOutlinedButton(
+                            text = "Aleatorio",
+                            accent = isThisSource && playbackState.shuffleEnabled,
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                if (isThisPlaylistPlaying) {
+                                if (isThisSource) {
                                     musicPlayer.toggleShuffle()
                                 } else if (displayTracks.isNotEmpty()) {
                                     val playableTracks = displayTracks.map(GeneratedTrack::toPlayableTrack)
-                                    val randomIndex = playableTracks.indices.random()
                                     musicPlayer.playQueue(
                                         playableTracks,
-                                        startIndex = randomIndex,
+                                        startIndex = playableTracks.indices.random(),
                                         sourceLabel = playlist.title,
                                         startShuffled = true,
                                     )
                                 }
                             },
-                            shape = CircleShape,
-                            colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                containerColor = if (isThisPlaylistPlaying && playbackState.shuffleEnabled) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.secondaryContainer
-                                },
-                                contentColor = if (isThisPlaylistPlaying && playbackState.shuffleEnabled) {
-                                    MaterialTheme.colorScheme.onPrimary
-                                } else {
-                                    MaterialTheme.colorScheme.onSecondaryContainer
-                                },
-                            ),
-                            modifier = Modifier.size(50.dp),
-                        ) {
-                            Icon(Icons.Filled.Shuffle, contentDescription = "Shuffle", modifier = Modifier.size(22.dp))
-                        }
-                        // Prominent Center Play / Playing Pill Button with Spring Physics
-                        val playInteractionSource = remember { MutableInteractionSource() }
-                        val isPlayPressed by playInteractionSource.collectIsPressedAsState()
-                        val playScale by animateFloatAsState(
-                            targetValue = if (isPlayPressed) 0.92f else 1f,
-                            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
-                            label = "heroPlayScale",
+                            leading = { Icon(Icons.Filled.Shuffle, contentDescription = null, modifier = Modifier.size(18.dp)) },
                         )
-
-                        Button(
+                        DialOutlinedButton(
+                            text = "Descargar",
+                            onClick = { viewModel.downloadPlaylist(playlistId) },
+                            leading = { Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        )
+                        Spacer(Modifier.weight(1f))
+                        DetailPlayButton(
+                            playing = isThisPlaylistPlaying,
+                            description = if (isThisPlaylistPlaying) "Pausar" else "Reproducir ${playlist.title}",
+                            enabled = displayTracks.isNotEmpty(),
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                if (playlist.tracks.isNotEmpty()) {
+                                if (isThisSource) {
+                                    musicPlayer.togglePlayPause()
+                                } else {
                                     musicPlayer.playQueue(
                                         displayTracks.map(GeneratedTrack::toPlayableTrack),
                                         startIndex = 0,
@@ -456,101 +383,44 @@ fun PlaylistDetailScreen(
                                     )
                                 }
                             },
-                            interactionSource = playInteractionSource,
-                            shape = CircleShape,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary,
-                            ),
-                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp, pressedElevation = 8.dp),
-                            modifier = Modifier
-                                .height(50.dp)
-                                .padding(horizontal = 4.dp)
-                                .graphicsLayer {
-                                    scaleX = playScale
-                                    scaleY = playScale
-                                },
-                        ) {
-                            Icon(
-                                if (isThisPlaylistPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                contentDescription = null,
-                                modifier = Modifier.size(26.dp),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                if (isThisPlaylistPlaying) "Playing" else "Play",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                        // Locate current song
-                        FilledTonalIconButton(
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                val playingTrack = playbackState.current
-                                if (playingTrack != null && isThisPlaylistPlaying) {
-                                    val index = displayTracks.indexOfFirst { it.name.equals(playingTrack.title, ignoreCase = true) && it.artist.equals(playingTrack.artist, ignoreCase = true) }
-                                    if (index >= 0) {
-                                        dragScope.launch { listState.animateScrollToItem(index + 1) } // +1 for the hero section
-                                    }
-                                }
-                            },
-                            shape = CircleShape,
-                            colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                            ),
-                            modifier = Modifier.size(50.dp),
-                        ) {
-                            Icon(Icons.Rounded.MyLocation, contentDescription = "Locate playing song", modifier = Modifier.size(22.dp))
-                        }
+                        )
                     }
 
-                    Spacer(Modifier.height(18.dp))
-
-                    // Sort Filter Pill & Lock Icon Row (Custom order, Date added, Name, Artist, Play time)
+                    // Order of the songs, and the lock that lets you drag them.
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                            .padding(start = 20.dp, end = 10.dp, top = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box {
-                            Surface(
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    sortMenuOpen = true
-                                },
-                                shape = RoundedCornerShape(50),
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
-                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                tonalElevation = 2.dp,
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(role = Role.Button) { sortMenuOpen = true }
+                                    .height(44.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    Text(
-                                        text = currentSort.label,
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                    Icon(
-                                        imageVector = if (sortAscending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                }
+                                Icon(
+                                    imageVector = if (sortAscending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
+                                    contentDescription = if (sortAscending) "Ascendente" else "Descendente",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    text = currentSort.label,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
 
                             DropdownMenu(
                                 expanded = sortMenuOpen,
                                 onDismissRequest = { sortMenuOpen = false },
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(10.dp),
                                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                tonalElevation = 6.dp,
-                                shadowElevation = 10.dp,
                                 modifier = Modifier.widthIn(min = 210.dp),
                             ) {
                                 PlaylistTrackSort.entries.forEach { option ->
@@ -565,7 +435,7 @@ fun PlaylistDetailScreen(
                                                 Text(
                                                     text = option.label,
                                                     style = MaterialTheme.typography.bodyMedium,
-                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                                     color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                                                 )
                                                 Spacer(Modifier.width(16.dp))
@@ -600,31 +470,20 @@ fun PlaylistDetailScreen(
                             }
                         }
 
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                if (playlist.isYouTubeOnly) {
-                                    playlist.remoteTrackCount?.let { "$it tracks" } ?: "Tracks"
-                                } else {
-                                    "${playlist.tracks.size} tracks"
-                                },
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = FontWeight.Medium,
-                            )
+                        Spacer(Modifier.weight(1f))
+
+                        if (!playlist.isYouTubeOnly) {
                             IconButton(
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     isReorderLocked = !isReorderLocked
                                 },
-                                modifier = Modifier.size(36.dp),
+                                modifier = Modifier.size(44.dp),
                             ) {
                                 Icon(
                                     imageVector = if (isReorderLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
-                                    contentDescription = if (isReorderLocked) "Reorder locked" else "Reorder unlocked",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    contentDescription = if (isReorderLocked) "Desbloquear para reordenar" else "Bloquear el orden",
+                                    tint = if (isReorderLocked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp),
                                 )
                             }
@@ -639,30 +498,28 @@ fun PlaylistDetailScreen(
                         androidx.compose.material3.OutlinedTextField(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },
-                            placeholder = { Text("Search in playlist") },
+                            placeholder = { Text("Buscar en la playlist") },
                             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                             trailingIcon = {
                                 if (searchQuery.isNotEmpty()) {
                                     IconButton(onClick = { searchQuery = "" }) {
-                                        Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                                        Icon(Icons.Filled.Close, contentDescription = "Borrar búsqueda")
                                     }
                                 }
                             },
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(8.dp),
                             singleLine = true,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp),
+                                .padding(start = 20.dp, end = 20.dp, top = 4.dp),
                             colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-                                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
                             ),
                         )
                     }
 
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
                 }
             }
 
@@ -676,10 +533,10 @@ fun PlaylistDetailScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         if (state.isDetailLoading) {
-                            ExpressiveLoadingIndicator(message = "Loading tracks...")
+                            ExpressiveLoadingIndicator(message = "Cargando canciones…")
                         } else {
                             Text(
-                                "No tracks in this playlist yet.",
+                                if (searchQuery.isNotBlank()) "Ninguna canción coincide con la búsqueda." else "Esta playlist todavía no tiene canciones.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -690,10 +547,10 @@ fun PlaylistDetailScreen(
                 if (!isReorderLocked && !reorderEnabled && !playlist.isYouTubeOnly && displayTracks.size > 1) {
                     item(key = "reorder_sort_hint", contentType = "hint") {
                         Text(
-                            "Switch to Custom order to rearrange",
+                            "Cambia a Orden personalizado, de arriba abajo, para reordenar",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
                         )
                     }
                 }
@@ -708,8 +565,7 @@ fun PlaylistDetailScreen(
                     },
                     contentType = { _, _ -> "playlist_track" },
                 ) { index, track ->
-                    val isPlayingThisSong = playbackState.isPlaying &&
-                        playbackState.current?.title.equals(track.name, ignoreCase = true) &&
+                    val isPlayingThisSong = playbackState.current?.title.equals(track.name, ignoreCase = true) &&
                         playbackState.current?.artist.equals(track.artist, ignoreCase = true)
                     val isDragging = reorderEnabled && index == draggingIndex
                     val stableKey = displayKeys.getOrElse(index) { "pos_fallback_$index" }
@@ -727,13 +583,13 @@ fun PlaylistDetailScreen(
                                 alpha = if (isDragging) 0.96f else 1f
                             },
                     ) {
-                        NativeTrackRow(
-                            index = index + 1,
-                            track = track,
-                            isPlaying = isPlayingThisSong,
+                        DetailTrackRow(
+                            title = track.name,
+                            subtitle = track.artist,
+                            artworkUrl = track.artworkUrl,
+                            playing = isPlayingThisSong,
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                if (displayTracks.isEmpty()) return@NativeTrackRow
+                                if (displayTracks.isEmpty()) return@DetailTrackRow
                                 // index is from composition time; the list can
                                 // shrink (remove/move) before the tap lands —
                                 // an OOB startIndex crashed playback at the edge.
@@ -747,27 +603,21 @@ fun PlaylistDetailScreen(
                                     )
                                 }
                             },
-                            onMenu = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                menuTarget = track
-                            },
-                            dragHandle = if (!reorderEnabled) {
+                            // While reordering, the row only drags: no menu on long press, no slide to the queue.
+                            onLongClick = if (reorderEnabled) null else ({ menuTarget = track }),
+                            onMenu = { menuTarget = track },
+                            onQueue = if (reorderEnabled) null else ({ musicPlayer.addToQueue(track.toPlayableTrack()) }),
+                            trailing = if (!reorderEnabled) {
                                 null
                             } else {
                                 {
                                     Icon(
                                         Icons.Filled.DragHandle,
                                         stringResource(com.spotiaisexs.app.R.string.queue_drag_hint),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isDragging) 1f else 0.6f),
+                                        tint = if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier
-                                            .padding(start = 4.dp)
-                                            .size(40.dp)
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(
-                                                if (isDragging) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                                                else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f),
-                                            )
-                                            .padding(8.dp)
+                                            // The whole 44 dp square takes the drag, not just the drawn handle.
+                                            .size(44.dp)
                                             .pointerInput(stableKey) {
                                                 detectDragGestures(
                                                     onDragStart = {
@@ -845,7 +695,8 @@ fun PlaylistDetailScreen(
                                                         }
                                                     },
                                                 )
-                                            },
+                                            }
+                                            .padding(10.dp),
                                     )
                                 }
                             },
@@ -855,283 +706,168 @@ fun PlaylistDetailScreen(
             }
         }
 
-        // 2. Floating Top Bar with Frosted Glass styling & Smooth Scrolled Header
-        val topBarBg by animateColorAsState(
-            targetValue = if (showScrolledHeader) MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.98f) else Color.Transparent,
-            animationSpec = tween(260),
-            label = "topBarBg",
-        )
-        val topBarElevation by animateDpAsState(
-            targetValue = if (showScrolledHeader) 6.dp else 0.dp,
-            animationSpec = tween(260),
-            label = "topBarElevation",
-        )
-
-        Surface(
-            color = topBarBg,
-            tonalElevation = topBarElevation,
-            shadowElevation = topBarElevation,
+        // 2. Bar over the cover: round buttons on the picture, solid with the title once scrolled.
+        DetailTopBar(
+            title = playlist.title,
+            scrolled = showScrolledHeader,
+            onBack = onBack,
             modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter),
+                .align(Alignment.TopCenter)
+                .adaptiveContentWidth(maxWidth = 860.dp),
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .adaptiveContentWidth(maxWidth = 860.dp)
-                    .windowInsetsPadding(WindowInsets.statusBars)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // Circular back button
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier
-                        .size(42.dp)
-                        .background(
-                            if (showScrolledHeader) Color.Transparent else Color.Black.copy(alpha = 0.38f),
-                            CircleShape,
-                        ),
+            if (showScrolledHeader && isThisSource) {
+                DetailBarButton(
+                    icon = Icons.Rounded.MyLocation,
+                    description = "Ir a la canción que suena",
+                    scrolled = true,
+                    onClick = { locatePlayingSong() },
+                )
+            }
+            DetailBarButton(
+                icon = Icons.Filled.Search,
+                description = "Buscar en la playlist",
+                scrolled = showScrolledHeader,
+                active = isSearchActive,
+                onClick = {
+                    isSearchActive = !isSearchActive
+                    if (isSearchActive) {
+                        // The search field lives under the cover: bring it up, clear of the keyboard.
+                        dragScope.launch {
+                            listState.animateScrollToItem(0, with(density) { 280.dp.roundToPx() })
+                        }
+                    } else {
+                        searchQuery = ""
+                    }
+                },
+            )
+            Box {
+                DetailBarButton(
+                    icon = Icons.Filled.MoreVert,
+                    description = "Opciones de la playlist",
+                    scrolled = showScrolledHeader,
+                    onClick = { overflowMenuOpen = true },
+                )
+                DropdownMenu(
+                    expanded = overflowMenuOpen,
+                    onDismissRequest = { overflowMenuOpen = false },
+                    shape = RoundedCornerShape(10.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = if (showScrolledHeader) MaterialTheme.colorScheme.onSurface else Color.White,
-                        modifier = Modifier.size(22.dp),
+                    DropdownMenuItem(
+                        text = { Text(if (playlist.isPinned) "Dejar de fijar" else "Fijar arriba") },
+                        leadingIcon = { Icon(Icons.Filled.PushPin, contentDescription = null) },
+                        onClick = {
+                            viewModel.togglePinned(playlistId)
+                            overflowMenuOpen = false
+                        },
                     )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    AnimatedVisibility(
-                        visible = showScrolledHeader,
-                        enter = fadeIn() + scaleIn(initialScale = 0.9f),
-                        exit = fadeOut() + scaleOut(targetScale = 0.9f),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(32.dp)) {
-                                PlaylistCover(
-                                    playlist = playlist,
-                                    modifier = Modifier.fillMaxSize(),
-                                    cornerRadius = 8.dp,
-                                )
-                            }
-                            Spacer(Modifier.width(10.dp))
-                            // Removed LocationOn icon
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = playlist.title,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                    DropdownMenuItem(
+                        text = { Text("Descargar todas las canciones") },
+                        leadingIcon = { Icon(Icons.Filled.Download, contentDescription = null) },
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.downloadPlaylist(playlistId)
+                            overflowMenuOpen = false
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Cancelar las descargas") },
+                        leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null) },
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.cancelPlaylistDownloads(playlistId)
+                            overflowMenuOpen = false
+                        },
+                    )
+                    if (playlist.isYouTubeOnly) {
+                        DropdownMenuItem(
+                            text = { Text("Guardar una copia local") },
+                            leadingIcon = { Icon(Icons.Filled.BookmarkAdd, contentDescription = null) },
+                            onClick = {
+                                viewModel.makeLocal(playlistId)
+                                overflowMenuOpen = false
+                            },
+                        )
+                    } else {
+                        if (playlist.mode != LIKED_SONGS_MODE) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (state.regeneratingId == playlistId) "Regenerando…"
+                                        else "Regenerar la playlist",
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Refresh,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                },
+                                enabled = state.regeneratingId == null,
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    viewModel.regenerate(playlistId) { newId ->
+                                        onOpenPlaylist?.invoke(newId)
+                                    }
+                                    overflowMenuOpen = false
+                                },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Cambiar la portada") },
+                            leadingIcon = { Icon(Icons.Filled.PhotoLibrary, contentDescription = null) },
+                            onClick = {
+                                coverEditorOpen = true
+                                overflowMenuOpen = false
+                            },
+                        )
+                        if (playlist.mode != LIKED_SONGS_MODE) {
+                            DropdownMenuItem(
+                                text = { Text("Cambiar el nombre") },
+                                leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                                onClick = {
+                                    viewModel.requestRename(playlistId)
+                                    overflowMenuOpen = false
+                                },
                             )
                         }
                     }
-                }
-
-                AnimatedVisibility(
-                    visible = showScrolledHeader && playlist.tracks.isNotEmpty(),
-                    enter = fadeIn() + scaleIn(),
-                    exit = fadeOut() + scaleOut(),
-                ) {
-                    FilledTonalIconButton(
+                    DropdownMenuItem(
+                        text = { Text("Exportar o compartir") },
+                        leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
                         onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            val playingTrack = playbackState.current
-                            if (playingTrack != null && isThisPlaylistPlaying) {
-                                val index = displayTracks.indexOfFirst { it.name.equals(playingTrack.title, ignoreCase = true) && it.artist.equals(playingTrack.artist, ignoreCase = true) }
-                                if (index >= 0) {
-                                    dragScope.launch { listState.animateScrollToItem(index + 1) }
-                                }
-                            }
+                            viewModel.openExportSheet(playlistId)
+                            overflowMenuOpen = false
                         },
-                        shape = CircleShape,
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        ),
-                        modifier = Modifier.size(38.dp),
-                    ) {
-                        Icon(Icons.Rounded.MyLocation, contentDescription = "Locate playing song", modifier = Modifier.size(16.dp))
-                    }
-                }
-
-                Spacer(Modifier.width(6.dp))
-
-                AnimatedVisibility(
-                    visible = true,
-                    enter = fadeIn() + scaleIn(),
-                    exit = fadeOut() + scaleOut(),
-                ) {
-                    FilledTonalIconButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            isSearchActive = !isSearchActive
-                            if (!isSearchActive) searchQuery = ""
-                        },
-                        shape = CircleShape,
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                            containerColor = if (isSearchActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
-                            contentColor = if (isSearchActive) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
-                        ),
-                        modifier = Modifier.size(38.dp),
-                    ) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search in playlist", modifier = Modifier.size(16.dp))
-                    }
-                }
-
-                Spacer(Modifier.width(6.dp))
-
-                // Translucent Actions Pill (Search / More Menu)
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = if (showScrolledHeader) Color.Transparent else Color.Black.copy(alpha = 0.38f),
-                ) {
-                    Box {
-                        IconButton(
+                    )
+                    if (!playlist.isYouTubeOnly) {
+                        val isSyncedToYt = syncedPlaylistIds == null || playlistId in (syncedPlaylistIds ?: emptySet())
+                        DropdownMenuItem(
+                            text = { Text(if (isSyncedToYt) "Sincronizada con YouTube Music" else "Sincronizar con YouTube Music") },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.CloudSync,
+                                    contentDescription = null,
+                                    tint = if (isSyncedToYt) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            },
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                overflowMenuOpen = true
+                                viewModel.toggleYtSync(playlistId)
+                                overflowMenuOpen = false
                             },
-                            modifier = Modifier.size(42.dp),
-                        ) {
-                            Icon(
-                                Icons.Filled.MoreVert,
-                                contentDescription = "Playlist options",
-                                tint = if (showScrolledHeader) MaterialTheme.colorScheme.onSurface else Color.White,
-                            )
-                        }
-
-                        DropdownMenu(
-                            expanded = overflowMenuOpen,
-                            onDismissRequest = { overflowMenuOpen = false },
-                            shape = RoundedCornerShape(24.dp),
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            tonalElevation = 6.dp,
-                            shadowElevation = 12.dp,
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text(if (playlist.isPinned) "Unpin playlist" else "Pin to top") },
-                                leadingIcon = { Icon(Icons.Filled.PushPin, contentDescription = null) },
-                                onClick = {
-                                    viewModel.togglePinned(playlistId)
-                                    overflowMenuOpen = false
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Download all songs") },
-                                leadingIcon = { Icon(Icons.Filled.Download, contentDescription = null) },
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    viewModel.downloadPlaylist(playlistId)
-                                    overflowMenuOpen = false
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Cancel playlist downloads") },
-                                leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null) },
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    viewModel.cancelPlaylistDownloads(playlistId)
-                                    overflowMenuOpen = false
-                                },
-                            )
-                            if (playlist.isYouTubeOnly) {
-                                DropdownMenuItem(
-                                    text = { Text("Make available locally") },
-                                    leadingIcon = { Icon(Icons.Filled.BookmarkAdd, contentDescription = null) },
-                                    onClick = {
-                                        viewModel.makeLocal(playlistId)
-                                        overflowMenuOpen = false
-                                    },
-                                )
-                            } else {
-                                if (playlist.mode != LIKED_SONGS_MODE) {
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                if (state.regeneratingId == playlistId) "Regenerating…"
-                                                else "Regenerate playlist",
-                                            )
-                                        },
-                                        leadingIcon = {
-                                            Icon(
-                                                Icons.Filled.Refresh,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                            )
-                                        },
-                                        enabled = state.regeneratingId == null,
-                                        onClick = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            viewModel.regenerate(playlistId) { newId ->
-                                                onOpenPlaylist?.invoke(newId)
-                                            }
-                                            overflowMenuOpen = false
-                                        },
-                                    )
-                                }
-                                DropdownMenuItem(
-                                    text = { Text("Change cover image") },
-                                    leadingIcon = { Icon(Icons.Filled.PhotoLibrary, contentDescription = null) },
-                                    onClick = {
-                                        coverEditorOpen = true
-                                        overflowMenuOpen = false
-                                    },
-                                )
-                                if (playlist.mode != LIKED_SONGS_MODE) {
-                                    DropdownMenuItem(
-                                        text = { Text("Rename playlist") },
-                                        leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
-                                        onClick = {
-                                            viewModel.requestRename(playlistId)
-                                            overflowMenuOpen = false
-                                        },
-                                    )
-                                }
-                            }
-                            DropdownMenuItem(
-                                text = { Text("Export / Share") },
-                                leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
-                                onClick = {
-                                    viewModel.openExportSheet(playlistId)
-                                    overflowMenuOpen = false
-                                },
-                            )
-                            if (!playlist.isYouTubeOnly) {
-                                val isSyncedToYt = syncedPlaylistIds == null || playlistId in (syncedPlaylistIds ?: emptySet())
-                                DropdownMenuItem(
-                                    text = { Text(if (isSyncedToYt) "Syncing to YouTube Music" else "Sync to YouTube Music") },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Filled.CloudSync,
-                                            contentDescription = null,
-                                            tint = if (isSyncedToYt) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    },
-                                    onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        viewModel.toggleYtSync(playlistId)
-                                        overflowMenuOpen = false
-                                    },
-                                )
-                            }
-                            if (!playlist.isYouTubeOnly) {
-                                DropdownMenuItem(
-                                    text = { Text("Delete playlist", color = MaterialTheme.colorScheme.error) },
-                                    leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                                    onClick = {
-                                        viewModel.requestDelete(playlistId)
-                                        overflowMenuOpen = false
-                                    },
-                                )
-                            }
-                        }
+                        )
+                    }
+                    if (!playlist.isYouTubeOnly) {
+                        DropdownMenuItem(
+                            text = { Text("Eliminar la playlist", color = MaterialTheme.colorScheme.error) },
+                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                            onClick = {
+                                viewModel.requestDelete(playlistId)
+                                overflowMenuOpen = false
+                            },
+                        )
                     }
                 }
             }
@@ -1161,7 +897,7 @@ fun PlaylistDetailScreen(
                         strokeWidth = 2.dp,
                     )
                     Text(
-                        "Building a fresh playlist…",
+                        "Montando una playlist nueva…",
                         color = MaterialTheme.colorScheme.inverseOnSurface,
                         style = MaterialTheme.typography.labelLarge,
                     )
@@ -1197,19 +933,19 @@ fun PlaylistDetailScreen(
     if (coverEditorOpen) {
         AlertDialog(
             onDismissRequest = { coverEditorOpen = false },
-            title = { Text("Playlist cover") },
+            title = { Text("Portada de la playlist") },
             text = {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    PlaylistCover(playlist = playlist, modifier = Modifier.size(140.dp), cornerRadius = 26.dp)
+                    PlaylistCover(playlist = playlist, modifier = Modifier.size(140.dp), cornerRadius = 8.dp)
                     Spacer(Modifier.height(16.dp))
                     Text(
                         if (playlist.customCoverUri.isNullOrBlank()) {
-                            "Automatic cover uses the first song with available artwork metadata."
+                            "La portada automática es la de la primera canción que tenga carátula."
                         } else {
-                            "This playlist is using your selected image."
+                            "Esta playlist usa la imagen que elegiste."
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1225,7 +961,7 @@ fun PlaylistDetailScreen(
                         coverPicker.launch(arrayOf("image/*"))
                     },
                 ) {
-                    Text(if (playlist.customCoverUri.isNullOrBlank()) "Choose image" else "Change image")
+                    Text(if (playlist.customCoverUri.isNullOrBlank()) "Elegir imagen" else "Cambiar imagen")
                 }
             },
             dismissButton = {
@@ -1236,9 +972,9 @@ fun PlaylistDetailScreen(
                                 viewModel.setCustomCover(playlistId, null)
                                 coverEditorOpen = false
                             },
-                        ) { Text("Use automatic") }
+                        ) { Text("Usar la automática") }
                     }
-                    TextButton(onClick = { coverEditorOpen = false }) { Text("Done") }
+                    TextButton(onClick = { coverEditorOpen = false }) { Text("Hecho") }
                 }
             },
         )
@@ -1248,15 +984,15 @@ fun PlaylistDetailScreen(
     if (state.deleteConfirmForPlaylistId != null) {
         AlertDialog(
             onDismissRequest = viewModel::dismissDeleteConfirm,
-            title = { Text("Delete playlist?") },
-            text = { Text("This will permanently remove \"${playlist.title}\".") },
+            title = { Text("¿Eliminar la playlist?") },
+            text = { Text("\"${playlist.title}\" se eliminará para siempre.") },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.confirmDelete()
                     onBack()
-                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                }) { Text("Eliminar", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = viewModel::dismissDeleteConfirm) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = viewModel::dismissDeleteConfirm) { Text("Cancelar") } },
         )
     }
 
@@ -1265,20 +1001,20 @@ fun PlaylistDetailScreen(
         var title by remember(id) { mutableStateOf(playlist.title) }
         AlertDialog(
             onDismissRequest = viewModel::dismissRename,
-            title = { Text("Rename playlist") },
+            title = { Text("Cambiar el nombre") },
             text = {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Playlist name") },
+                    label = { Text("Nombre de la playlist") },
                     singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(8.dp),
                 )
             },
             confirmButton = {
-                TextButton(onClick = { viewModel.renamePlaylist(title) }, enabled = title.isNotBlank()) { Text("Save") }
+                TextButton(onClick = { viewModel.renamePlaylist(title) }, enabled = title.isNotBlank()) { Text("Guardar") }
             },
-            dismissButton = { TextButton(onClick = viewModel::dismissRename) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = viewModel::dismissRename) { Text("Cancelar") } },
         )
     }
 
@@ -1312,187 +1048,5 @@ fun PlaylistDetailScreen(
             onDeleteScrobble = { name, artist -> viewModel.deleteScrobble(name, artist) },
             onRefreshArtwork = { viewModel.refreshArtwork(track.name, track.artist) },
         )
-    }
-}
-
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-@Composable
-private fun NativeTrackRow(
-    index: Int,
-    track: GeneratedTrack,
-    isPlaying: Boolean,
-    onClick: () -> Unit,
-    onMenu: () -> Unit,
-    dragHandle: (@Composable () -> Unit)? = null,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val rowScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.98f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
-        label = "rowPress",
-    )
-    val rowBackground by animateColorAsState(
-        targetValue = if (isPlaying) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else Color.Transparent,
-        animationSpec = tween(350),
-        label = "rowBg",
-    )
-
-    val rowModifier = if (isPlaying) {
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(
-                Brush.horizontalGradient(
-                    listOf(
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
-                        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f),
-                    ),
-                ),
-            )
-            .graphicsLayer {
-                scaleX = rowScale
-                scaleY = rowScale
-            }
-    } else {
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .graphicsLayer {
-                scaleX = rowScale
-                scaleY = rowScale
-            }
-    }
-
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = Color.Transparent,
-        modifier = rowModifier,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .combinedClickable(
-                    interactionSource = interactionSource,
-                    indication = null,
-                    onClick = onClick,
-                    onLongClick = if (dragHandle != null) null else onMenu,
-                )
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // Track index or playing animation
-            Box(
-                modifier = Modifier.width(36.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                Text(
-                    text = "$index",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.outline,
-                    maxLines = 1,
-                    overflow = TextOverflow.Visible,
-                )
-            }
-            Spacer(Modifier.width(6.dp))
-            Box(Modifier.size(48.dp).clip(ArtworkShape)) {
-                ArtworkImage(
-                    name = track.name,
-                    artist = track.artist,
-                    embeddedUrl = track.artworkUrl,
-                    fallbackIcon = Icons.Filled.MusicNote,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                if (isPlaying) {
-                    com.spotiaisexs.app.ui.player.PlayingWaveBars(
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(2.dp).size(24.dp, 18.dp),
-                    )
-                }
-            }
-
-            Spacer(Modifier.width(14.dp))
-
-            // Title & Artist
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = track.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.SemiBold,
-                    color = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = track.artist,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            // Now Playing badge if active
-            if (isPlaying) {
-                val transition = rememberInfiniteTransition(label = "nowPlayingAnim")
-                val pulseScale by transition.animateFloat(
-                    initialValue = 1.0f,
-                    targetValue = 1.06f,
-                    animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Reverse),
-                    label = "pulseScale",
-                )
-                val dotAlpha by transition.animateFloat(
-                    initialValue = 0.45f,
-                    targetValue = 1f,
-                    animationSpec = infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Reverse),
-                    label = "dotAlpha",
-                )
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primary,
-                    tonalElevation = 4.dp,
-                    shadowElevation = 2.dp,
-                    modifier = Modifier.graphicsLayer {
-                        scaleX = pulseScale
-                        scaleY = pulseScale
-                    },
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .graphicsLayer { alpha = dotAlpha }
-                                .background(MaterialTheme.colorScheme.onPrimary, CircleShape),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            "Now Playing",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimary,
-                        )
-                    }
-                }
-                Spacer(Modifier.width(4.dp))
-            }
-
-            // Drag handle (only when reorder is enabled by the caller)
-            dragHandle?.invoke()
-            // Options menu button
-            IconButton(
-                onClick = onMenu,
-                modifier = Modifier.size(36.dp),
-            ) {
-                Icon(
-                    Icons.Filled.MoreVert,
-                    contentDescription = "Song options",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
     }
 }

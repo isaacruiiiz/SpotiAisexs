@@ -32,6 +32,15 @@ class ThisIsPlaylistsTest {
     }
 
     @Test
+    fun aSongOnBothListsCountsAsTheUsers() {
+        val hits = listOf(hit("Columbia", "a"), hit("Quédate", "b"))
+        val user = listOf(mine("Playa del Inglés", "x", 900_000), mine("Columbia (Live)", "y", 600_000))
+        val tracks = builder.mix(hits, user)
+        // "Columbia" stays in its hit version, but the user listens to it a lot too.
+        assertThat(builder.mineIds(tracks, user)).containsExactly("x", "a")
+    }
+
+    @Test
     fun idsRoundTrip() {
         val id = ThisIsPlaylists.idFor("Rels B", "UC123")
         assertThat(ThisIsPlaylists.parse(id)).isEqualTo("Rels B" to "UC123")

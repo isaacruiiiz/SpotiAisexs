@@ -111,7 +111,7 @@ class SettingsClearAllDataTest {
             MutableStateFlow(emptyList<RecommendationExclusionEntity>())
         every { appUpdateManager.updateInfo } returns MutableStateFlow(UpdateInfo())
         every { musicPlayer.state } returns playerState
-        every { musicPlayer.stopAndClear(clearSession = true) } answers { order += "player" }
+        every { musicPlayer.stopAndClear(clearSession = true, reason = any()) } answers { order += "player" }
         coEvery { downloadManager.clearAllDownloads() } coAnswers { order += "downloads" }
         coEvery { discoverRepository.clearRecommendationExclusions() } coAnswers { order += "exclusions" }
         coEvery { playlistRepository.clearAll() } coAnswers { order += "playlists" }
@@ -185,8 +185,8 @@ class SettingsClearAllDataTest {
             assertThat(playerState.value).isEqualTo(state)
             assertThat(label).isNotEmpty()
         }
-        verify(exactly = 3) { musicPlayer.stopAndClear(clearSession = true) }
-        verify(exactly = 0) { musicPlayer.stopAndClear(clearSession = false) }
+        verify(exactly = 3) { musicPlayer.stopAndClear(clearSession = true, reason = any()) }
+        verify(exactly = 0) { musicPlayer.stopAndClear(clearSession = false, reason = any()) }
         coVerify(exactly = 3) { downloadManager.clearAllDownloads() }
         coVerify(exactly = 3) { sessionPreferences.clearAll() }
         assertThat(viewModel.uiState.value.showClearAllConfirm).isFalse()
@@ -238,7 +238,7 @@ class SettingsClearAllDataTest {
         assertThat(order).isEmpty()
         assertThat(session.value.apiKey).isEqualTo("secret-key")
         assertThat(session.value.apiSecret).isEqualTo("secret-secret")
-        verify(exactly = 0) { musicPlayer.stopAndClear(any()) }
+        verify(exactly = 0) { musicPlayer.stopAndClear(any(), any()) }
         coVerify(exactly = 0) { downloadManager.clearAllDownloads() }
         coVerify(exactly = 0) { sessionPreferences.clearAll() }
         coVerify(exactly = 0) { playlistRepository.clearAll() }
@@ -261,7 +261,7 @@ class SettingsClearAllDataTest {
         coVerify(exactly = 0) { discoverRepository.clearRecommendationExclusions() }
         assertThat(viewModel.uiState.value.toastMessage).isEqualTo("Couldn't clear saved data. Please try again.")
         assertThat(viewModel.uiState.value.showClearAllConfirm).isTrue()
-        verify(exactly = 1) { musicPlayer.stopAndClear(clearSession = true) }
+        verify(exactly = 1) { musicPlayer.stopAndClear(clearSession = true, reason = any()) }
 
         order.clear()
         coEvery { downloadManager.clearAllDownloads() } coAnswers { order += "downloads" }
@@ -291,7 +291,7 @@ class SettingsClearAllDataTest {
         viewModel.clearSession { completed++ }
         assertThat(cleared).isEqualTo(1)
         assertThat(completed).isEqualTo(2)
-        verify(exactly = 0) { musicPlayer.stopAndClear(any()) }
+        verify(exactly = 0) { musicPlayer.stopAndClear(any(), any()) }
         coVerify(exactly = 0) { downloadManager.clearAllDownloads() }
         coVerify(exactly = 0) { playlistRepository.clearAll() }
         coVerify(exactly = 0) { discoverRepository.clearRecommendationExclusions() }

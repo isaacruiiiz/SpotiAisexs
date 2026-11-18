@@ -1,683 +1,498 @@
-// SpotiAisexs web — reproductor completo que funciona solo o sincronizado con
-// el teléfono (estilo Spotify Connect).
-//
-// · Sin teléfono: biblioteca (playlists que el teléfono subió a Firebase),
-//   búsqueda (biblioteca + YouTube), radio infinita propia (radio.js),
-//   Me gusta y playlists (se guardan aquí y el teléfono las aplica al
-//   conectarse, vía libraryInbox) y reproducción aquí.
-// · Con teléfono: un solo dispositivo "activo" reproduce y publica
-//   users/{uid}/playback; los demás lo ven y mandan órdenes a commands/{id}.
-//   Ver docs/WEB_SYNC.md.
-
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import {
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {
-  getDatabase, ref, onValue, set, push, remove, onChildAdded, serverTimestamp, onDisconnect, off,
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
-import * as cfg from "./config.js";
-import { youtubeSearch as ytSearch } from "./youtube.js";
-import { Radio, recordPlay, recordSkip } from "./radio.js";
-import { accentFor, applyAccent } from "./accent.js";
+// SpotiAisexs web · interfaz. El estado y la reproducción viven en core.js.
+import * as core from "./core.js";
+import { S, ui, catalog, catalogReady } from "./core.js";
 
 const $ = (id) => document.getElementById(id);
-const firebaseConfig = cfg.firebaseConfig || {};
-const youtubeApiKey = (cfg.youtubeApiKey || "").trim();
-const youtubeSearch = (query, opts) => ytSearch(query, youtubeApiKey, opts);
-const ONLINE_WINDOW_MS = 75_000;
-const HEARTBEAT_MS = 25_000;
-const POSITION_PUBLISH_MS = 8_000;
-const COMMAND_MAX_AGE_MS = 30_000;
-
-// ── Identidad de este navegador ─────────────────────────────────────────
-const deviceId = localStorage.getItem("spotiaisexs-device") || `web-${crypto.randomUUID().slice(0, 8)}`;
-localStorage.setItem("spotiaisexs-device", deviceId);
-const deviceName = `Navegador · ${browserName()}`;
-
-function browserName() {
-  const ua = navigator.userAgent;
-  const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Web";
-  const os = /Mac OS X/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Linux/.test(ua) ? "Linux" : "";
-  return os ? `${browser} en ${os}` : browser;
-}
-
-// ── Estado ──────────────────────────────────────────────────────────────
-let db, auth, base = null;
-let serverOffset = 0;            // reloj del servidor - reloj local
-let playback = null;             // documento compartido
-let devices = {};
-let library = {};                // id → { title, subtitle, artworkUrl, tracks: [] }
-let localQueue = [];             // cola cuando este navegador es el activo
-let localIndex = 0;
-let shuffleOn = false;
-let ytPlayer = null, ytReady = false, pendingLoad = null;
-let lastPositionPublish = 0;
-let unsubscribers = [];
-let heartbeatTimer = null;
-let currentView = "home";
-let openPlaylistId = null;
-let lastSearch = { query: "", local: [], remote: [], error: "" };
-let disconnectArmed = false;
-let jam = null;                  // users/{uid}/jam (Jam compartida)
-const handledJamRequests = new Set();
-let ownerEmail = "";
-let ownerUid = "";
-let radio = null;                // Radio activa (cola infinita) cuando suena aquí
-let radioLoading = false;
-let trackStartedAt = 0;          // para distinguir "escuchada" de "saltada"
-let accentKey = "";
-const RADIO_REFILL_AT = 5;       // quedan ≤5 canciones → pedir otra tanda
-
-const serverNow = () => Date.now() + serverOffset;
-const isActiveHere = () => playback?.activeDevice === deviceId;
-const isDeviceOnline = (id) => {
-  if (!id) return false;
-  if (id === deviceId) return true;
-  const d = devices[id];
-  return !!d?.lastSeen && serverNow() - d.lastSeen < ONLINE_WINDOW_MS;
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const songs = (n) => `${n} ${n === 1 ? "canción" : "canciones"}`;
+const fmt = (ms) => {
+  const s = Math.max(0, Math.floor((ms || 0) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
-/** Otro dispositivo está reproduciendo y sigue conectado → somos un mando. */
-const isRemote = () => !!playback?.activeDevice && !isActiveHere() && isDeviceOnline(playback.activeDevice);
+const enc = encodeURIComponent;
+const svg = (body, size = 20, extra = 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"') =>
+  `<svg viewBox="0 0 24 24" width="${size}" height="${size}" ${extra} aria-hidden="true">${body}</svg>`;
+const I = {
+  play: svg('<path d="M7.5 4.5v15l12-7.5z"/>', 26, 'fill="currentColor"'),
+  shuffle: svg('<path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22"/><path d="m18 2 4 4-4 4"/><path d="M2 6h1.9c1.5 0 2.9.9 3.6 2.2"/><path d="M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8"/><path d="m18 14 4 4-4 4"/>', 18),
+  radio: svg('<circle cx="12" cy="12" r="2.5"/><path d="M7 7a7 7 0 0 0 0 10"/><path d="M17 7a7 7 0 0 1 0 10"/>', 20),
+  save: svg('<path d="M6 4h12v16l-6-4.5L6 20z"/>', 18),
+  heart: svg('<path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2z"/>', 20),
+  more: svg('<circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/>', 20, 'fill="currentColor"'),
+  queue: svg('<path d="M4 6h12"/><path d="M4 12h12"/><path d="M4 18h7"/><path d="M18 14v6"/><path d="M15 17h6"/>', 20),
+  list: svg('<path d="M5 4v16"/><path d="M10 4v16"/><path d="m15 4.5 4.5 15"/>', 20),
+  plus: svg('<path d="M12 5v14"/><path d="M5 12h14"/>', 20),
+  back: svg('<path d="m15 5-7 7 7 7"/>', 22),
+  person: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', 20),
+  album: svg('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>', 20),
+  chevron: svg('<path d="m9 5 7 7-7 7"/>', 20),
+  eq: svg('<rect x="4" y="10" width="3.4" height="10" rx="1"/><rect x="10.3" y="4" width="3.4" height="16" rx="1"/><rect x="16.6" y="13" width="3.4" height="7" rx="1"/>', 14, 'fill="currentColor" class="eq"'),
+  phone: svg('<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>', 22),
+  screen: svg('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/>', 22),
+};
 
-// ── Arranque ────────────────────────────────────────────────────────────
-if (!firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith("PEGA_")) {
-  $("setup").hidden = false;
-} else {
-  const app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db = getDatabase(app);
-  // Un invitado de la Jam entra como usuario anónimo: aquí no cuenta como sesión.
-  onAuthStateChanged(auth, (user) => (user && !user.isAnonymous ? startSession(user) : showLogin()));
+function img(url, cls = "thumb") {
+  if (!url) return `<div class="${cls.replace("thumb", "thumb-ph")}"></div>`;
+  return `<img class="${cls}" src="${esc(url)}" alt="" loading="lazy" data-fallback>`;
+}
+document.addEventListener("error", (e) => {
+  const el = e.target;
+  if (el.tagName === "IMG" && el.hasAttribute("data-fallback")) { el.removeAttribute("data-fallback"); el.src = "logo.svg"; el.style.objectFit = "contain"; el.style.padding = "22%"; }
+}, true);
+
+// ── Avisos ──────────────────────────────────────────────────────────────
+let toastTimer = null;
+ui.toast = (message) => {
+  const el = $("toast");
+  el.textContent = message;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 4200);
+};
+
+// ── Listas de canciones pintadas (para saber qué se ha pulsado) ─────────
+const lists = new Map();
+function reg(id, tracks) { lists.set(id, tracks); return id; }
+
+function row(t, i, listId, { num = false, sub = null, time = true, current = false } = {}) {
+  const liked = core.isLiked(t);
+  return `<li class="row${current ? " current" : ""}" data-list="${listId}" data-i="${i}" data-vid="${esc(t.videoId || "")}">
+    ${num ? `<span class="row-num">${i + 1}</span>` : ""}
+    ${img(core.artFor(t))}
+    <div class="row-text">
+      <div class="row-title">${I.eq}<span>${esc(t.title)}</span></div>
+      <div class="row-sub">${t.addedBy ? `<span class="by">${esc(t.addedBy)}</span>` : ""}${esc(sub ?? t.artist ?? "")}</div>
+    </div>
+    ${t.mine ? '<span class="tag">Tuya</span>' : ""}
+    ${time && t.durationMs ? `<span class="row-time hide-narrow">${fmt(t.durationMs)}</span>` : ""}
+    <button class="icon-btn like hide-narrow" data-act="like" aria-pressed="${liked}" aria-label="${liked ? "Quitar de Me gusta" : "Añadir a Me gusta"}">${I.heart}</button>
+    <button class="icon-btn" data-act="more" aria-label="Más opciones de ${esc(t.title)}">${I.more}</button>
+  </li>`;
+}
+const rows = (tracks, listId, opts) => `<ol class="rows">${tracks.map((t, i) => row(t, i, reg(listId, tracks), opts)).join("")}</ol>`;
+
+function tile({ href, title, sub = "", art = "", round = false, strip = "" }) {
+  return `<a class="tile${round ? " round" : ""}" href="${esc(href)}">
+    <div class="tile-art">${art ? `<img src="${esc(art)}" alt="" loading="lazy" data-fallback>` : '<div class="tile-ph"></div>'}${strip ? `<span class="strip">${esc(strip)}</span>` : ""}</div>
+    <div class="tile-title">${esc(title)}</div>${sub ? `<div class="tile-sub">${esc(sub)}</div>` : ""}
+  </a>`;
+}
+const section = (title, body, right = "") => (body ? `<section class="section"><div class="section-head"><h2>${esc(title)}</h2>${right}</div>${body}</section>` : "");
+
+// ── Rutas ───────────────────────────────────────────────────────────────
+let route = { name: "home", args: [] };
+const pageCache = new Map();
+let search = { query: "", loading: false, error: "", results: null };
+
+function parseRoute() {
+  const parts = location.hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
+  const names = { "": "home", buscar: "search", biblioteca: "library", playlist: "playlist", artista: "artist", album: "album", lista: "ytlist", estoes: "thisis" };
+  return { name: names[parts[0]] || "home", args: parts.slice(1) };
 }
 
-function showLogin() {
-  stopSession();
-  $("app").hidden = true;
-  $("login").hidden = false;
-}
-
-$("login-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  $("login-error").textContent = "";
-  try {
-    await signInWithEmailAndPassword(auth, $("login-email").value.trim(), $("login-password").value);
-  } catch (error) {
-    $("login-error").textContent = /invalid|wrong|not-found/i.test(error.code || "")
-      ? "Correo o contraseña incorrectos"
-      : `No se pudo entrar (${error.code || error.message})`;
+function navigate() {
+  route = parseRoute();
+  const top = route.name === "playlist" ? "library" : ["artist", "album", "ytlist", "thisis"].includes(route.name) ? "search" : route.name;
+  document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === top));
+  $("app").classList.remove("now-open");
+  renderPage();
+  $("main").scrollTop = 0;
+  if (route.name === "search") {
+    const q = route.args[0] || "";
+    if (q && q !== search.query) runSearch(q);
+    setTimeout(() => $("search-input")?.focus(), 0);
   }
-});
+}
+window.addEventListener("hashchange", navigate);
 
-$("logout").addEventListener("click", async () => {
-  if (isActiveHere()) pauseLocal();
-  await signOut(auth);
-});
-
-function listen(path, handler) {
-  const r = ref(db, path);
-  onValue(r, (snap) => handler(snap.val()));
-  unsubscribers.push(() => off(r));
+function renderPage() {
+  const pages = { home: pageHome, search: pageSearch, library: pageLibrary, playlist: pagePlaylist, artist: pageArtist, album: pageAlbum, ytlist: pageYtList, thisis: pageThisIs };
+  $("main").innerHTML = (pages[route.name] || pageHome)();
+  markPlaying();
+  renderSideList();
 }
 
-function startSession(user) {
-  stopSession();
-  base = `users/${user.uid}`;
-  ownerUid = user.uid;
-  ownerEmail = user.email || "";
-  $("login").hidden = true;
-  $("app").hidden = false;
+/** Páginas que piden datos al catálogo: se pinta "Cargando" y luego el resultado. */
+function remote(key, loader, render) {
+  const hit = pageCache.get(key);
+  if (hit?.data) return render(hit.data);
+  if (hit?.error) return `<div class="empty">${backButton()}<p>${esc(hit.error)}</p></div>`;
+  if (!hit) {
+    pageCache.set(key, { loading: true });
+    loader().then((data) => pageCache.set(key, { data }), (e) => pageCache.set(key, { error: e.message || "No se ha podido cargar" }))
+      .then(() => { if (pageKey() === key) renderPage(); });
+  }
+  return '<div class="loading">Cargando…</div>';
+}
+const pageKey = () => `${route.name}:${route.args.join("/")}`;
+const backButton = () => `<button class="icon-btn hero-back" data-act="back" aria-label="Volver">${I.back}</button>`;
+const needsCatalog = (what) => `<div class="empty">${backButton()}<p>${what} necesita el catálogo completo. Se activa en dos minutos: mira «Catálogo completo en la web» en docs/WEB_SYNC.md.</p></div>`;
 
-  const deviceRef = ref(db, `${base}/devices/${deviceId}`);
-  const beat = () => set(deviceRef, { name: deviceName, type: "web", lastSeen: serverTimestamp() });
-  beat();
-  onDisconnect(deviceRef).remove();
-  heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
+function detail({ image, kicker = "", title, meta, actions, body }) {
+  return `<div class="hero">${image ? `<img src="${esc(image)}" alt="" data-fallback>` : ""}${backButton()}
+      <div class="hero-text">${kicker ? `<span class="hero-kicker">${esc(kicker)}</span>` : ""}<h1>${esc(title)}</h1></div></div>
+    <div class="detail"><p class="meta">${esc(meta)}</p><div class="actions">${actions}</div>${body}</div>`;
+}
+const playRound = (listId, label) => `<button class="play-round" data-act="play-list" data-list="${listId}" aria-label="Reproducir ${esc(label)}">${I.play}</button>`;
+const shuffleBtn = (listId) => `<button class="btn-line" data-act="shuffle-list" data-list="${listId}">${I.shuffle}Aleatorio</button>`;
+const saveBtn = `<button class="btn-line" data-act="save-list">${I.save}Guardar</button>`;
 
-  listen(".info/serverTimeOffset", (v) => { serverOffset = Number(v) || 0; });
-  listen(`${base}/playback`, onPlayback);
-  listen(`${base}/devices`, (v) => { devices = v || {}; render(); });
-  listen(`${base}/library/playlists`, (v) => { library = v || {}; renderLibrary(); renderView(); });
-  listen(`${base}/jam`, (v) => { jam = v; onJamChanged(); });
+// ── Páginas ─────────────────────────────────────────────────────────────
+function pageHome() {
+  const pls = core.sortedPlaylists();
+  const p = S.playback;
+  const resume = p?.track && !core.isActiveHere() && !core.isRemote() ? p : null;
+  const artists = core.topArtists(10);
+  const d = core.radioInfo()?.distance ?? S.distance;
+  const stations = core.STATIONS.filter((s) => s.id !== "mix").map((s) =>
+    `<button class="station" data-act="station" data-id="${s.id}"><strong>${esc(s.name)}</strong><span>${esc(s.hint)}</span></button>`).join("");
+  return `<div class="page">
+    <div class="mix">
+      <div><h2>Tu mezcla</h2><p>Lo que ya te gusta y algo nuevo. Mueve el dial para quedarte cerca de lo conocido o alejarte.</p></div>
+      <button class="play-round" data-act="station" data-id="mix" aria-label="Reproducir Tu mezcla">${I.play}</button>
+      <div class="dial-box"><div class="dial-head"><span class="cond">¿Cuánto me alejo?</span><span class="dial-zone" data-zone>${core.distanceLabel(d)}</span></div>
+        <input class="dial" data-dial type="range" min="0" max="100" step="1" value="${d}" aria-label="¿Cuánto me alejo de lo que conozco?">
+        <div class="dial-ends"><span>Pegada</span><span>Todo nuevo</span></div></div>
+    </div>
+    ${resume ? section("Sigue donde lo dejaste", `<div class="top-result" data-act="resume">${img(core.artFor(resume.track), "")}
+        <div class="row-text"><h3>${esc(resume.track.title)}</h3><p class="muted">${esc(resume.track.artist || "")}, en ${esc(resume.activeDeviceName || "otro dispositivo")}</p></div>
+        <span class="btn-line accent">Seguir aquí</span></div>`) : ""}
+    ${section("Emisoras", `<div class="stations">${stations}</div>`)}
+    ${section("Hace poco", S.recents.length ? `<div class="shelf">${S.recents.slice(0, 14).map((t, i) =>
+      `<button class="tile" data-act="play-recent" data-i="${i}"><div class="tile-art"><img src="${esc(core.artFor(t))}" alt="" loading="lazy" data-fallback></div><div class="tile-title">${esc(t.title)}</div><div class="tile-sub">${esc(t.artist || "")}</div></button>`).join("")}</div>` : "")}
+    ${section("Tus playlists", pls.length ? `<div class="shelf">${pls.map((pl) => tile({ href: `#/playlist/${enc(pl.id)}`, title: pl.title, sub: songs(pl.tracks.length), art: pl.artworkUrl || core.artFor(pl.tracks[0]) })).join("")}</div>` : "")}
+    ${catalogReady && artists.length ? section("Esto es", `<div class="shelf">${artists.slice(0, 8).map((a) => tile({ href: `#/estoes/${enc(a.name)}`, title: `Esto es ${a.name}`, sub: "Sus éxitos y lo tuyo", art: a.artworkUrl, strip: "Esto es" })).join("")}</div>`) : ""}
+    ${catalogReady && artists.length ? section("Artistas para ti", `<div class="shelf">${artists.map((a) => tile({ href: `#/artista/n/${enc(a.name)}`, title: a.name, art: a.artworkUrl, round: true })).join("")}</div>`) : ""}
+    ${!pls.length ? '<p class="notice"><strong>Tu biblioteca está vacía.</strong> Busca cualquier canción y dale a Me gusta o crea una playlist desde aquí. Si enlazas el teléfono (Ajustes, Web y Jam), tus playlists de la app aparecen solas.</p>' : ""}
+    ${!catalogReady ? '<p class="notice"><strong>Falta el catálogo completo.</strong> Sin él no hay páginas de artista ni álbum y las búsquedas tienen un límite diario. Se activa en dos minutos: mira «Catálogo completo en la web» en docs/WEB_SYNC.md.</p>' : ""}
+  </div>`;
+}
 
-  const commandsRef = ref(db, `${base}/commands/${deviceId}`);
-  onChildAdded(commandsRef, (snap) => {
-    const command = snap.val();
-    remove(snap.ref);
-    if (!command || (command.at && serverNow() - command.at > COMMAND_MAX_AGE_MS)) return;
-    executeCommand(command);
+function pageLibrary() {
+  const pls = core.sortedPlaylists();
+  return `<div class="page"><h1>Biblioteca</h1>
+    <div class="actions"><button class="btn-line" data-act="new-playlist">${I.plus}Nueva playlist</button></div>
+    ${pls.length ? `<section class="section"><div class="grid">${pls.map((pl) => tile({ href: `#/playlist/${enc(pl.id)}`, title: pl.title, sub: songs(pl.tracks.length), art: pl.artworkUrl || core.artFor(pl.tracks[0]) })).join("")}</div></section>`
+      : '<p class="notice">Aún no hay playlists. Crea una aquí o enlaza el teléfono para traer las de la app.</p>'}</div>`;
+}
+
+function pagePlaylist() {
+  const pl = S.library[route.args[0]];
+  if (!pl) return `<div class="empty">${backButton()}<p>Esta playlist no está en tu biblioteca.</p></div>`;
+  const tracks = pl.tracks || [];
+  const listId = reg("page", tracks);
+  return detail({
+    image: pl.artworkUrl || core.artFor(tracks[0]),
+    title: pl.title,
+    meta: `Playlist, ${songs(tracks.length)}`,
+    actions: `${shuffleBtn(listId)}<span class="spacer"></span>${playRound(listId, pl.title)}`,
+    body: tracks.length ? `<div class="section">${rows(tracks, "page")}</div>` : '<p class="notice">Esta playlist todavía no tiene canciones. Añádelas desde el menú de cualquier canción.</p>',
   });
-  unsubscribers.push(() => off(commandsRef));
-
-  showView("home");
 }
 
-function stopSession() {
-  unsubscribers.forEach((fn) => fn());
-  unsubscribers = [];
-  clearInterval(heartbeatTimer);
-  base = null;
-}
-
-// ── Estado compartido ───────────────────────────────────────────────────
-function onPlayback(value) {
-  const wasActive = isActiveHere();
-  playback = value;
-  if (wasActive && !isActiveHere()) {
-    // Otro dispositivo se ha quedado la reproducción: paramos aquí.
-    if (ytReady) ytPlayer.pauseVideo();
-    showVideo(false);
-    armDisconnect(false);
-  }
-  render();
-}
-
-function estimatedPosition(p) {
-  if (!p) return 0;
-  const online = isDeviceOnline(p.activeDevice);
-  const elapsed = p.isPlaying && online && p.updatedAt ? Math.max(0, serverNow() - p.updatedAt) : 0;
-  const pos = (p.positionMs || 0) + elapsed;
-  return p.durationMs > 0 ? Math.min(pos, p.durationMs) : pos;
-}
-
-/** Si esta pestaña se cierra mientras suena aquí, la marca como pausada. */
-function armDisconnect(on) {
-  if (!base || on === disconnectArmed) return;
-  const r = onDisconnect(ref(db, `${base}/playback/isPlaying`));
-  (on ? r.set(false) : r.cancel()).catch(() => {});
-  disconnectArmed = on;
-}
-
-function publish() {
-  if (!base) return Promise.resolve();
-  const track = localQueue[localIndex];
-  if (!track) return Promise.resolve();
-  const state = ytReady ? ytPlayer.getPlayerState?.() : -1;
-  const playing = ytReady && (state === YT.PlayerState.PLAYING || state === YT.PlayerState.BUFFERING);
-  const positionMs = ytReady ? Math.round((ytPlayer.getCurrentTime?.() || 0) * 1000) : 0;
-  const durationMs = ytReady && ytPlayer.getDuration?.() > 0 ? Math.round(ytPlayer.getDuration() * 1000) : (track.durationMs || 0);
-  const doc = {
-    activeDevice: deviceId,
-    activeDeviceName: deviceName,
-    activeDeviceType: "web",
-    track: clean(track),
-    isPlaying: playing,
-    positionMs,
-    durationMs,
-    updatedAt: serverTimestamp(),
-    queue: localQueue.slice(localIndex, localIndex + 50).map(clean),
-    queueIndex: 0,
+function pageArtist() {
+  if (!catalogReady) return needsCatalog("La página de artista");
+  const byName = route.args[0] === "n";
+  const loader = async () => {
+    const id = byName ? (await catalog.searchArtists(route.args[1], 1))[0]?.browseId : route.args[0];
+    if (!id) throw new Error(`No se ha encontrado a ${route.args[1] || "este artista"}`);
+    return catalog.artist(id);
   };
-  lastPositionPublish = Date.now();
-  playback = { ...doc, updatedAt: serverNow() };
-  armDisconnect(true);
-  updateMediaSession(track, playing);
-  return set(ref(db, `${base}/playback`), doc).catch(() => {});
-}
-
-const clean = (t) => Object.fromEntries(
-  ["title", "artist", "album", "artworkUrl", "videoId", "durationMs", "addedBy"]
-    .filter((k) => t?.[k] !== undefined && t?.[k] !== null && t?.[k] !== "")
-    .map((k) => [k, t[k]]),
-);
-
-function sendCommand(type, extra = {}) {
-  const target = playback?.activeDevice;
-  if (!base || !target || target === deviceId) return;
-  push(ref(db, `${base}/commands/${target}`), { type, from: deviceId, at: serverTimestamp(), ...extra });
-}
-
-function executeCommand(command) {
-  if (command.type === "transfer") return playHere();
-  if (command.type === "playTracks" && command.tracks?.length) return playTracks(command.tracks, command.index || 0);
-  if (!isActiveHere()) return;
-  switch (command.type) {
-    case "play": if (ytReady) ytPlayer.playVideo(); break;
-    case "pause": if (ytReady) ytPlayer.pauseVideo(); break;
-    case "toggle": togglePlay(); break;
-    case "next": skip(1); break;
-    case "previous": skip(-1); break;
-    case "seek": if (command.positionMs != null) seekTo(command.positionMs); break;
-    case "playIndex": if (command.index != null) loadIndex(localIndex + command.index, 0); break;
-    case "queue": (command.tracks || []).forEach((t) => queueLocal(t)); break;
-    case "radio": if (command.tracks?.[0]) startRadioHere(command.tracks[0], "focused"); break;
-  }
-}
-
-// ── Reproducción local (YouTube IFrame) ─────────────────────────────────
-window.onYouTubeIframeAPIReady = () => {
-  ytPlayer = new YT.Player("yt-player", {
-    width: "100%",
-    height: "100%",
-    playerVars: { autoplay: 1, controls: 0, playsinline: 1, rel: 0, modestbranding: 1 },
-    events: {
-      onReady: () => {
-        ytReady = true;
-        ytPlayer.setVolume(Number($("volume").value));
-        if (pendingLoad) { const p = pendingLoad; pendingLoad = null; p(); }
-      },
-      onStateChange: (e) => {
-        if (!isActiveHere()) return;
-        if (e.data === YT.PlayerState.ENDED) { recordPlay(localQueue[localIndex]); trackStartedAt = 0; skip(1, true); }
-        else if (e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.PAUSED) { publish(); render(); }
-      },
-      // 101/150: el vídeo no permite reproducirse incrustado → siguiente.
-      onError: () => { if (isActiveHere()) { toast("Esta canción no se puede reproducir en la web, saltando…"); skip(1, true); } },
-    },
-  });
-};
-{
-  // La API se carga después de definir el callback (evita la carrera de carga).
-  const tag = document.createElement("script");
-  tag.src = "https://www.youtube.com/iframe_api";
-  document.head.appendChild(tag);
-}
-
-function showVideo(visible) {
-  // YouTube exige que su reproductor sea visible mientras suena.
-  $("yt-holder").hidden = !visible;
-  $("nowpanel").classList.toggle("must-show", visible);
-}
-
-/**
- * Reproduce [tracks] desde [index]. Si otro dispositivo está sonando (el
- * teléfono), suena allí, como en Spotify Connect; si no, aquí.
- * Una sola canción (buscada, de un enlace…) arranca su radio enfocada: la
- * cola sigue con canciones de su entorno. Una playlist suena tal cual y, al
- * acabarse, sigue con radio de su última canción.
- */
-function playTracks(tracks, index = 0, startMs = 0, { here = false, radioStyle = null } = {}) {
-  const playable = tracks.filter((t) => t?.videoId && t.playable !== false);
-  if (!playable.length) return toast("No hay canciones reproducibles");
-  const target = tracks[index];
-  if (target && target.playable === false) return playBlocked(target);
-  if (!here && isRemote()) {
-    sendCommand("playTracks", { tracks: tracks.slice(index, index + 100).map(clean), index: 0 });
-    toast(`Suena en ${playback.activeDeviceName || "el otro dispositivo"}`);
-    return;
-  }
-  noteListened();
-  localQueue = playable.map((t) => ({ ...t }));
-  localIndex = Math.max(0, localQueue.findIndex((t) => t === target || t.videoId === target?.videoId));
-  if (shuffleOn) shuffleUpcoming();
-  const style = radioStyle || (playable.length === 1 ? "focused" : null);
-  radio = style ? newRadio(localQueue[localIndex], style) : null;
-  playback = { ...(playback || {}), activeDevice: deviceId };
-  loadIndex(localIndex, startMs);
-}
-
-function newRadio(seed, style) {
-  return new Radio({ seed, style, apiKey: youtubeApiKey, libraryTracks: allLibraryTracks });
-}
-
-/** Radio desde una canción en este navegador (o en el dispositivo que suena). */
-function startRadioHere(seed, style = "focused") {
-  if (!seed?.videoId) return;
-  if (!youtubeApiKey) return toast("La radio necesita la clave de YouTube en config.js");
-  if (isRemote() && style === "focused") {
-    sendCommand("radio", { tracks: [clean(seed)] });
-    toast(`Radio de «${seed.title}» en ${playback.activeDeviceName || "el otro dispositivo"}`);
-    return;
-  }
-  playTracks([seed], 0, 0, { here: true, radioStyle: style });
-  toast(style === "explore" ? "Radio infinita" : `Radio de «${seed.title}»`);
-}
-
-/** Escuchada (≥30 s) o saltada antes: alimenta el historial de la radio. */
-function noteListened() {
-  const prev = localQueue[localIndex];
-  if (!prev || !trackStartedAt || !isActiveHere()) return;
-  const listened = ytReady ? (ytPlayer.getCurrentTime?.() || 0) : 0;
-  if (listened >= 30) recordPlay(prev);
-  else if (prev.fromRadio) recordSkip(prev);
-  trackStartedAt = 0;
-}
-
-/** Pide otra tanda a la radio cuando quedan pocas canciones por delante. */
-async function extendRadio({ force = false } = {}) {
-  if (!radio || radioLoading || !youtubeApiKey) return false;
-  const remaining = localQueue.length - localIndex - 1;
-  if (!force && remaining > RADIO_REFILL_AT) return false;
-  radioLoading = true;
-  renderQueue();
-  const owner = radio;
-  try {
-    const batch = await radio.next(localQueue, 20);
-    if (owner !== radio || !batch.length) return false;
-    const known = new Set(localQueue.map((t) => t.videoId));
-    const fresh = batch.filter((t) => !known.has(t.videoId));
-    localQueue.push(...fresh);
-    if (isActiveHere()) publish();
-    return fresh.length > 0;
-  } catch (error) {
-    toast(error.message || "La radio no ha podido cargar más canciones");
-    return false;
-  } finally {
-    radioLoading = false;
-    render();
-  }
-}
-
-function loadIndex(index, startMs) {
-  if (index < 0 || index >= localQueue.length) return;
-  localIndex = index;
-  const track = localQueue[index];
-  if (!track.videoId) return skip(1, true);
-  const go = () => {
-    ytPlayer.loadVideoById({ videoId: track.videoId, startSeconds: Math.max(0, (startMs || 0) / 1000) });
-    trackStartedAt = Date.now();
-    showVideo(true);
-    publish();
-    render();
-    extendRadio();
-  };
-  ytReady ? go() : (pendingLoad = go);
-}
-
-async function skip(delta, auto = false) {
-  if (delta < 0 && ytReady && ytPlayer.getCurrentTime() > 3) return seekTo(0);
-  if (!auto) noteListened();
-  const next = localIndex + delta;
-  if (next >= 0 && next < localQueue.length) return loadIndex(next, 0);
-  if (delta > 0) {
-    // Fin de la cola: sigue con radio de la última canción (como el teléfono).
-    if (!radio) radio = newRadio(localQueue[localIndex], "focused");
-    if (await extendRadio({ force: true }) && localIndex + 1 < localQueue.length) return loadIndex(localIndex + 1, 0);
-    if (auto) { if (ytReady) ytPlayer.pauseVideo(); publish(); }
-  }
-}
-
-function seekTo(ms) {
-  if (!ytReady) return;
-  ytPlayer.seekTo(ms / 1000, true);
-  setTimeout(publish, 300);
-}
-
-function togglePlay() {
-  if (!ytReady) return;
-  ytPlayer.getPlayerState() === YT.PlayerState.PLAYING ? ytPlayer.pauseVideo() : ytPlayer.playVideo();
-}
-
-function pauseLocal() {
-  if (ytReady) ytPlayer.pauseVideo();
-  if (isActiveHere()) setTimeout(publish, 200);
-}
-
-/** "Reproducir aquí": continúa en este navegador lo último que sonó en cualquier dispositivo. */
-function playHere() {
-  const p = playback;
-  if (!p?.track) return;
-  const queue = (p.queue?.length ? p.queue : [p.track]);
-  const index = Math.min(p.queueIndex || 0, queue.length - 1);
-  playTracks(queue, index, estimatedPosition(p), { here: true });
-  // La cola del otro dispositivo sigue con radio de lo que sonaba.
-  radio = newRadio(queue[index], "focused");
-}
-
-function shuffleUpcoming() {
-  const head = localQueue.slice(0, localIndex + 1);
-  localQueue = [...head, ...shuffled(localQueue.slice(localIndex + 1))];
-}
-
-/** "Añadir a la cola": tras la actual y tras lo que ya añadiste, antes de la radio. */
-function addToQueue(track) {
-  if (!track?.videoId) return;
-  if (track.playable === false) return playBlocked(track);
-  if (isRemote()) {
-    sendCommand("queue", { tracks: [clean(track)] });
-    return toast("Añadida a la cola");
-  }
-  if (isActiveHere() && localQueue.length) {
-    queueLocal(track);
-    toast("Añadida a la cola");
-  } else {
-    playTracks([track], 0, 0, { here: true });
-  }
-}
-
-function queueLocal(track) {
-  if (!track?.videoId) return;
-  let at = localIndex + 1;
-  while (at < localQueue.length && (localQueue[at].queued || localQueue[at].addedBy)) at++;
-  localQueue.splice(at, 0, { ...track, queued: true, fromRadio: false });
-  publish();
-  render();
-}
-
-/**
- * YouTube no deja reproducir esta canción fuera de su web/app (lo decide la
- * discográfica). Si el teléfono está conectado, que suene allí: la app la
- * reproduce sin esa limitación.
- */
-function playBlocked(track) {
-  const phone = Object.entries(devices).find(([id, d]) => d?.type === "phone" && isDeviceOnline(id));
-  if (!phone) {
-    toast("YouTube no deja reproducir esta canción en la web. Ábrela en el teléfono.");
-    return;
-  }
-  push(ref(db, `${base}/commands/${phone[0]}`), {
-    type: "playTracks", tracks: [clean(track)], index: 0, from: deviceId, at: serverTimestamp(),
-  });
-  if (isActiveHere() && ytReady) ytPlayer.pauseVideo();
-  toast("YouTube no la deja en la web: suena en tu teléfono");
-}
-
-const shuffled = (arr) => {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
-  return a;
-};
-
-// ── Jam compartida ──────────────────────────────────────────────────────
-// Los amigos abren jam.html (sin cuenta) y piden canciones; aquí solo se
-// atienden si este navegador es el que reproduce (o, si no suena nada en
-// ningún sitio, si fue el que abrió la Jam). Los enlaces de Spotify los
-// resuelve el teléfono, porque un navegador no puede leer las páginas de Spotify.
-
-const JAM_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
-
-function jamLink() {
-  if (!jam?.open || !jam.code) return "";
-  const here = new URL(".", location.href);
-  return `${here.href}jam.html#${ownerUid}.${jam.code}`;
-}
-
-function jamProcessorHere() {
-  const active = playback?.activeDevice;
-  if (active && isDeviceOnline(active)) return active === deviceId;
-  return jam?.hostDevice === deviceId;
-}
-
-function onJamChanged() {
-  $("jam-btn").classList.toggle("live", !!jam?.open);
-  renderJamPanel();
-  if (!jam?.open || !jamProcessorHere()) return;
-  const requests = Object.entries(jam.requests || {}).sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
-  for (const [id, req] of requests) {
-    if (!req?.videoId || handledJamRequests.has(id)) continue; // los enlaces de Spotify los resuelve el teléfono
-    handledJamRequests.add(id);
-    enqueueJamTrack({
-      title: req.title || "Canción de la Jam",
-      artist: req.artist || "",
-      artworkUrl: req.artworkUrl,
-      videoId: req.videoId,
-      durationMs: req.durationMs,
-      addedBy: req.by,
+  return remote(pageKey(), loader, (a) => {
+    const listId = reg("page", a.topSongs);
+    const all = !!pageCache.get(pageKey()).all;
+    const shown = a.topSongs.slice(0, all ? 60 : 5);
+    const releases = (items, kind) => `<div class="shelf">${items.map((x) => tile({ href: `#/album/${enc(x.browseId)}`, title: x.title, sub: [/single/i.test(x.type) ? "Sencillo" : /ep/i.test(x.type) ? "EP" : kind, x.year].filter(Boolean).join(", "), art: x.artworkUrl })).join("")}</div>`;
+    return detail({
+      image: a.artworkUrl,
+      title: a.name,
+      meta: a.subscribers ? `${a.subscribers} de suscriptores` : "Artista",
+      actions: `<button class="btn-line accent" data-act="artist-radio">${I.radio}Emisora</button>${a.topSongs.length ? shuffleBtn(listId) : ""}<span class="spacer"></span>${a.topSongs.length ? playRound(listId, a.name) : ""}`,
+      body: `<a class="thisis" href="#/estoes/${enc(a.name)}/${enc(a.browseId)}"><div class="tile-art">${img(a.artworkUrl, "")}<span class="strip"></span></div>
+          <div class="row-text"><div class="row-title"><span>Esto es ${esc(a.name)}</span></div><div class="row-sub">Sus éxitos y lo que más le escuchas tú</div></div>${I.chevron}</a>
+        ${a.topSongs.length ? section("Populares", `<ol class="rows">${shown.map((t, i) => row(t, i, "page", { num: true, sub: t.album || t.artist })).join("")}</ol>
+          ${a.topSongs.length > 5 && !all ? `<div class="actions"><button class="btn-line" data-act="show-all">Ver las ${a.topSongs.length} canciones</button></div>` : ""}`) : ""}
+        ${a.albums.length ? section("Álbumes", releases(a.albums, "Álbum")) : ""}
+        ${a.singles.length ? section("Sencillos y EP", releases(a.singles, "Sencillo")) : ""}
+        ${a.bio ? section("Acerca de", `<p class="bio">${esc(a.bio.slice(0, 700))}${a.bio.length > 700 ? "…" : ""}</p>`) : ""}
+        ${a.similar.length ? section("Artistas parecidos", `<div class="shelf">${a.similar.map((x) => tile({ href: `#/artista/${enc(x.browseId)}`, title: x.title, art: x.artworkUrl, round: true })).join("")}</div>`) : ""}`,
     });
-    remove(ref(db, `${base}/jam/requests/${id}`));
-    set(ref(db, `${base}/jam/added/${req.videoId}`), { by: req.by || "", at: serverTimestamp() });
-    toast(`${req.by || "Alguien"} ha añadido «${req.title || "una canción"}»`);
-  }
-}
-
-/** Como Spotify Jam: tras la canción actual y tras las que ya añadieron otros. */
-function enqueueJamTrack(track) {
-  if (isActiveHere() && localQueue.length) {
-    let at = localIndex + 1;
-    while (at < localQueue.length && localQueue[at].addedBy) at++;
-    localQueue.splice(at, 0, track);
-    publish();
-    render();
-  } else {
-    playTracks([track], 0, 0, { here: true });
-  }
-}
-
-async function startJam(hostName) {
-  let code = "";
-  const bytes = crypto.getRandomValues(new Uint8Array(10));
-  bytes.forEach((b) => { code += JAM_ALPHABET[b % JAM_ALPHABET.length]; });
-  handledJamRequests.clear();
-  await set(ref(db, `${base}/jam`), {
-    open: true,
-    code,
-    hostName: (hostName || "SpotiAisexs").trim().slice(0, 30),
-    hostDevice: deviceId,
-    createdAt: serverTimestamp(),
   });
 }
 
-async function endJam() {
-  await set(ref(db, `${base}/jam`), { open: false });
-  localQueue.forEach((t) => { delete t.addedBy; });
-  if (isActiveHere()) publish();
+function pageAlbum() {
+  if (!catalogReady) return needsCatalog("La página de álbum");
+  return remote(pageKey(), () => catalog.album(route.args[0]), (al) => {
+    const listId = reg("page", al.tracks);
+    return detail({
+      image: al.artworkUrl,
+      title: al.title,
+      meta: [al.artist, al.year, songs(al.tracks.length)].filter(Boolean).join(", "),
+      actions: `${saveBtn}${shuffleBtn(listId)}${al.artistId ? `<a class="btn-line" href="#/artista/${enc(al.artistId)}">${I.person}Artista</a>` : ""}<span class="spacer"></span>${playRound(listId, al.title)}`,
+      body: `<div class="section">${rows(al.tracks, "page", { num: true })}</div>`,
+    });
+  });
 }
 
-function renderJamPanel() {
+function pageYtList() {
+  if (!catalogReady) return needsCatalog("Esta playlist");
+  return remote(pageKey(), () => catalog.playlist(route.args[0]), (pl) => {
+    const listId = reg("page", pl.tracks);
+    return detail({
+      image: pl.artworkUrl, title: pl.title, meta: [pl.author, songs(pl.tracks.length)].filter(Boolean).join(", "),
+      actions: `${saveBtn}${shuffleBtn(listId)}<span class="spacer"></span>${playRound(listId, pl.title)}`,
+      body: `<div class="section">${rows(pl.tracks, "page")}</div>`,
+    });
+  });
+}
+
+function pageThisIs() {
+  if (!catalogReady) return needsCatalog("«Esto es»");
+  return remote(pageKey(), () => core.buildThisIs(route.args[0], route.args[1] || ""), (x) => {
+    const listId = reg("page", x.tracks);
+    return detail({
+      image: x.artist.artworkUrl, kicker: "Esto es", title: x.artist.name,
+      meta: `${x.hasMine ? "Sus éxitos y lo que tienes tú de este artista" : "Sus canciones más escuchadas"}. ${songs(x.tracks.length)}.`,
+      actions: `${saveBtn}${shuffleBtn(listId)}<span class="spacer"></span>${playRound(listId, `Esto es ${x.artist.name}`)}`,
+      body: `${x.hasMine ? '<div class="legend"><span class="tag">Tuya</span><span>de las que tienes en tu biblioteca</span></div>' : '<div class="section"></div>'}${rows(x.tracks, "page")}`,
+    });
+  });
+}
+
+function pageSearch() {
+  const r = search.results;
+  let body = "";
+  if (search.loading) body = '<div class="loading">Buscando…</div>';
+  else if (search.error) body = `<p class="notice">${esc(search.error)}</p>`;
+  else if (r) {
+    const top = r.songs[0];
+    body = `
+      ${top ? section("Resultado destacado", `<div class="top-result" data-act="play-top">${img(core.artFor(top), "")}
+          <div class="row-text"><h3>${esc(top.title)}</h3><p class="muted">Canción, ${esc(top.artist || "")}</p></div>
+          <button class="icon-btn" data-act="top-more" aria-label="Más opciones de ${esc(top.title)}">${I.more}</button><span class="play-round">${I.play}</span></div>`) : ""}
+      ${r.songs.length ? section("Canciones", rows(r.songs, "search")) : ""}
+      ${r.artists?.length ? section("Artistas", `<div class="shelf">${r.artists.map((a) => tile({ href: `#/artista/${enc(a.browseId)}`, title: a.name, art: a.artworkUrl, round: true })).join("")}</div>`) : ""}
+      ${r.albums?.length ? section("Álbumes", `<div class="shelf">${r.albums.map((a) => tile({ href: `#/album/${enc(a.browseId)}`, title: a.name, sub: [a.artist, a.year].filter(Boolean).join(", "), art: a.artworkUrl })).join("")}</div>`) : ""}
+      ${r.local.length ? section("En tu biblioteca", rows(r.local, "search-local")) : ""}
+      ${!r.songs.length && !r.local.length ? `<p class="notice">No hay resultados para «${esc(search.query)}».${core.canSearchOnline ? "" : " Sin catálogo ni clave de YouTube solo se busca en tu biblioteca."}</p>` : ""}`;
+  }
+  return `<div class="page"><h1>Buscar</h1>
+    <form id="search-form" class="search-box" role="search">${svg('<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/>', 22)}
+      <input id="search-input" type="search" placeholder="Canciones, artistas o álbumes" autocomplete="off" aria-label="Buscar" value="${esc(search.query)}"></form>
+    ${body}</div>`;
+}
+
+async function runSearch(query) {
+  search = { query, loading: true, error: "", results: null };
+  if (route.name === "search") renderPage();
+  try {
+    const results = await core.searchAll(query);
+    if (search.query !== query) return;
+    search = { query, loading: false, error: "", results };
+  } catch (e) {
+    if (search.query !== query) return;
+    search = { query, loading: false, error: e.message || "La búsqueda ha fallado", results: null };
+  }
+  if (route.name === "search") renderPage();
+}
+
+function renderSideList() {
+  const items = core.sortedPlaylists();
+  $("side-list").innerHTML = items.length
+    ? items.map((pl) => `<li><a href="#/playlist/${enc(pl.id)}"${route.name === "playlist" && route.args[0] === pl.id ? ' class="active"' : ""}>
+        ${img(pl.artworkUrl || core.artFor(pl.tracks[0]))}<div class="side-text"><div class="side-title">${esc(pl.title)}</div><div class="side-sub">${songs(pl.tracks.length)}</div></div></a></li>`).join("")
+    : '<li class="muted small" style="padding:8px 10px">Tus playlists aparecerán aquí.</li>';
+}
+
+// ── Lo que suena, la barra y la cola ────────────────────────────────────
+function setCover(imgId, emptyId, url) {
+  const el = $(imgId);
+  if (url) { if (el.getAttribute("src") !== url) el.src = url; el.hidden = false; $(emptyId).hidden = true; }
+  else { el.hidden = true; $(emptyId).hidden = false; }
+}
+
+ui.render = () => {
+  if (!S.user) return;
+  const track = core.currentTrack();
+  $("now-name").textContent = track?.title || "Nada sonando";
+  $("now-artist").textContent = track?.artist || "Busca algo o pon una emisora";
+  $("bar-title").textContent = track?.title || "Nada sonando";
+  $("bar-artist").textContent = track?.artist || "";
+  document.title = track ? `${track.title}, ${track.artist || ""}` : "SpotiAisexs";
+  setCover("now-cover", "now-empty", core.artFor(track));
+  setCover("bar-cover", "bar-cover-empty", core.artFor(track));
+  const liked = core.isLiked(track);
+  ["now-like", "bar-like"].forEach((id) => {
+    $(id).setAttribute("aria-pressed", String(liked));
+    $(id).setAttribute("aria-label", liked ? "Quitar de Me gusta" : "Añadir a Me gusta");
+    $(id).disabled = !track?.videoId;
+  });
+  const playing = core.isPlayingNow();
+  $("ic-play").toggleAttribute("hidden", playing);
+  $("ic-pause").toggleAttribute("hidden", !playing);
+  $("play").setAttribute("aria-label", playing ? "Pausar" : "Reproducir");
+  $("shuffle").setAttribute("aria-pressed", String(S.shuffle));
+
+  const isRemote = core.isRemote();
+  $("device-label").textContent = isRemote ? `Suena en ${S.playback.activeDeviceName || "otro dispositivo"}` : "Este navegador";
+  $("device-btn").classList.toggle("on", isRemote);
+
+  const info = core.radioInfo();
+  $("dial-box").hidden = !info;
+  if (info) {
+    $("dial-station").textContent = info.loading ? "Buscando más canciones…" : info.label || "Radio";
+    if (document.activeElement !== $("dial")) $("dial").value = info.distance;
+    $("dial-zone").textContent = core.distanceLabel(Number($("dial").value));
+  }
+  renderQueue();
+  renderDevices();
+  markPlaying();
+  renderProgress();
+};
+
+function renderQueue() {
+  const queue = core.visibleQueue();
+  $("queue-empty").hidden = queue.length > 0;
+  $("queue-list").innerHTML = queue.map((t, i) => row(t, i, reg("queue", queue), { time: false, current: i === 0 })).join("");
+}
+
+function markPlaying() {
+  const id = core.currentTrack()?.videoId;
+  document.querySelectorAll("#main .row[data-vid]").forEach((li) => li.classList.toggle("playing", !!id && li.dataset.vid === id));
+}
+
+let dragFraction = null;
+function renderProgress() {
+  const duration = core.currentDuration();
+  const position = dragFraction != null ? dragFraction * duration : core.currentPosition();
+  const fraction = duration > 0 ? Math.min(1, position / duration) : 0;
+  $("ribbon-fill").style.width = `${fraction * 100}%`;
+  $("t-pos").textContent = fmt(position);
+  $("t-left").textContent = duration ? `-${fmt(duration - position)}` : "";
+  $("t-left").style.visibility = fraction > 0.86 ? "hidden" : "visible";
+  $("ribbon").setAttribute("aria-valuenow", String(Math.round(fraction * 100)));
+}
+setInterval(() => { if (S.user) { renderProgress(); core.tick(); } }, 500);
+
+function seekFraction(fraction) {
+  const duration = core.currentDuration();
+  if (!duration) return;
+  const ms = Math.round(Math.max(0, Math.min(1, fraction)) * duration);
+  if (core.isActiveHere()) core.seekTo(ms);
+  else if (core.isRemote()) core.sendCommand("seek", { positionMs: ms });
+}
+{
+  const ribbon = $("ribbon");
+  const at = (e) => { const r = ribbon.getBoundingClientRect(); return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)); };
+  ribbon.addEventListener("pointerdown", (e) => { ribbon.setPointerCapture(e.pointerId); dragFraction = at(e); ribbon.classList.add("dragging"); renderProgress(); });
+  ribbon.addEventListener("pointermove", (e) => { if (dragFraction != null) { dragFraction = at(e); renderProgress(); } });
+  const end = (commit) => () => { if (dragFraction == null) return; const f = dragFraction; dragFraction = null; ribbon.classList.remove("dragging"); if (commit) seekFraction(f); renderProgress(); };
+  ribbon.addEventListener("pointerup", end(true));
+  ribbon.addEventListener("pointercancel", end(false));
+  ribbon.addEventListener("keydown", (e) => {
+    const duration = core.currentDuration();
+    if (!duration || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    e.preventDefault();
+    seekFraction((core.currentPosition() + (e.key === "ArrowRight" ? 5000 : -5000)) / duration);
+  });
+}
+
+ui.video = (visible) => {
+  $("yt-holder").hidden = !visible;
+  $("app").classList.toggle("video-on", visible);
+};
+ui.needsTap = (show) => { $("tap-to-play").hidden = !show; };
+$("tap-to-play").addEventListener("click", () => { core.resumePlayer(); $("tap-to-play").hidden = true; });
+
+// ── Dispositivos y Jam ──────────────────────────────────────────────────
+function renderDevices() {
+  const menu = $("device-menu");
+  if (menu.hidden) return;
+  const others = Object.entries(S.devices).filter(([id]) => id !== core.deviceId && core.isDeviceOnline(id));
+  const entries = [[core.deviceId, { name: core.deviceName, type: "web" }], ...others];
+  const activeId = core.isActiveHere() ? core.deviceId : core.isRemote() ? S.playback.activeDevice : null;
+  menu.innerHTML = "<h3>¿Dónde suena?</h3>" + entries.map(([id, d]) => `
+    <button class="device${id === activeId ? " active" : ""}" data-device="${esc(id)}">${d.type === "phone" ? I.phone : I.screen}
+      <span>${esc(id === core.deviceId ? "Este navegador" : d.name)}<small>${id === activeId ? "Sonando aquí" : "Pulsa para escuchar aquí"}</small></span></button>`).join("")
+    + (others.length ? "" : '<p class="muted small">Abre la app en el teléfono, con la web enlazada en Ajustes, para verlo aquí.</p>');
+}
+$("device-menu").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-device]");
+  if (!b) return;
+  $("device-menu").hidden = true;
+  core.transferTo(b.dataset.device);
+});
+
+ui.jam = () => { $("jam-btn").classList.toggle("on", !!S.jam?.open); renderJam(); };
+function renderJam() {
   const panel = $("jam-panel");
   if (panel.hidden) return;
-  if (!jam?.open) {
-    const defaultName = localStorage.getItem("spotiaisexs-jam-host") || ownerEmail.split("@")[0] || "";
-    panel.innerHTML = `
-      <h3>Jam</h3>
-      <p class="muted small">Tus amigos añaden canciones a tu cola desde un enlace, sin cuenta y aunque usen Spotify.</p>
-      <label class="jam-label">Tu nombre<input id="jam-host-name" maxlength="30" value="${esc(defaultName)}"></label>
-      <button id="jam-start" class="btn-primary">Empezar Jam</button>`;
+  if (!S.jam?.open) {
+    const name = core.store.get("spotiaisexs-jam-host", "") || (S.user?.email || "").split("@")[0];
+    panel.innerHTML = `<h3>Jam</h3><p class="muted small">Tus amigos añaden canciones a tu cola desde un enlace, sin cuenta y aunque usen Spotify.</p>
+      <label class="small muted">Tu nombre<input id="jam-host" class="field" maxlength="30" value="${esc(name)}" style="width:100%;margin-top:4px"></label>
+      <button id="jam-start" class="btn-fill">Empezar Jam</button>`;
     $("jam-start").addEventListener("click", async () => {
-      const name = $("jam-host-name").value.trim();
-      localStorage.setItem("spotiaisexs-jam-host", name);
+      const host = $("jam-host").value.trim();
+      core.store.set("spotiaisexs-jam-host", host);
       $("jam-start").disabled = true;
-      try { await startJam(name); } catch (e) { toast(`No se pudo empezar la Jam (${e.code || e.message})`); }
+      try { await core.startJam(host); } catch (e) { ui.toast(`No se pudo empezar la Jam (${e.code || e.message})`); }
     });
     return;
   }
-  const link = jamLink();
-  const now = serverNow();
-  const guests = [...new Set(Object.values(jam.guests || {})
-    .filter((g) => g?.lastSeen && now - g.lastSeen < 90_000)
-    .map((g) => g.name))];
-  panel.innerHTML = `
-    <h3>Jam en directo <span class="live-dot"></span></h3>
-    <div class="jam-qr" id="jam-qr" aria-label="Código QR para unirse"></div>
+  const link = core.jamLink();
+  const now = core.serverNow();
+  const guests = [...new Set(Object.values(S.jam.guests || {}).filter((g) => g?.lastSeen && now - g.lastSeen < 90_000).map((g) => g.name))];
+  panel.innerHTML = `<h3>Jam en directo</h3><div class="jam-qr" id="jam-qr" aria-label="Código QR para unirse"></div>
     <p class="muted small">Que lo escaneen con la cámara, o mándales el enlace.</p>
-    <div class="jam-link"><input id="jam-link" readonly value="${esc(link)}"><button id="jam-copy" class="btn-ghost">Copiar</button></div>
+    <div class="jam-link"><input id="jam-link" class="field" readonly value="${esc(link)}"><button id="jam-copy" class="btn-line">Copiar</button></div>
     <p class="small">${guests.length ? `En la Jam: ${guests.map(esc).join(", ")}` : "Aún no se ha unido nadie"}</p>
-    <button id="jam-end" class="btn-ghost">Terminar Jam</button>`;
-  drawQr($("jam-qr"), link);
-  $("jam-copy").addEventListener("click", async () => {
-    try { await navigator.clipboard.writeText(link); toast("Enlace copiado"); }
-    catch { $("jam-link").select(); }
-  });
-  $("jam-end").addEventListener("click", () => endJam());
+    <button id="jam-end" class="btn-line">Terminar Jam</button>`;
+  if (window.qrcode) { const qr = window.qrcode(0, "M"); qr.addData(link); qr.make(); $("jam-qr").innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true }); }
+  $("jam-copy").addEventListener("click", async () => { try { await navigator.clipboard.writeText(link); ui.toast("Enlace copiado"); } catch { $("jam-link").select(); } });
+  $("jam-end").addEventListener("click", () => core.endJam());
 }
-
-function drawQr(el, text) {
-  if (!window.qrcode) { el.textContent = ""; return; }
-  const qr = window.qrcode(0, "M");
-  qr.addData(text);
-  qr.make();
-  el.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
-}
+$("jam-btn").addEventListener("click", () => { $("jam-panel").hidden = !$("jam-panel").hidden; $("device-menu").hidden = true; renderJam(); });
+$("device-btn").addEventListener("click", () => { $("device-menu").hidden = !$("device-menu").hidden; $("jam-panel").hidden = true; renderDevices(); });
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".pop-anchor")) { $("device-menu").hidden = true; $("jam-panel").hidden = true; }
+});
 
 // ── Controles ───────────────────────────────────────────────────────────
 $("play").addEventListener("click", () => {
-  if (isActiveHere()) return togglePlay();
-  if (isRemote()) return sendCommand("toggle");
-  // Nadie reproduce (o el dispositivo que lo hacía se desconectó): seguir aquí.
-  if (playback?.track) return playHere();
-  showView("search");
+  if (core.isActiveHere()) return core.togglePlay();
+  if (core.isRemote()) return core.sendCommand("toggle");
+  // Nadie reproduce (o quien lo hacía se desconectó): se sigue aquí.
+  if (S.playback?.track) return core.playHere();
+  core.playStation("mix");
 });
-$("next").addEventListener("click", () => (isActiveHere() ? skip(1) : isRemote() ? sendCommand("next") : null));
-$("prev").addEventListener("click", () => (isActiveHere() ? skip(-1) : isRemote() ? sendCommand("previous") : null));
-$("shuffle").addEventListener("click", () => {
-  shuffleOn = !shuffleOn;
-  $("shuffle").setAttribute("aria-pressed", String(shuffleOn));
-  if (shuffleOn && isActiveHere()) { shuffleUpcoming(); publish(); render(); }
-});
-$("queue-toggle").addEventListener("click", () => $("app").classList.toggle("queue-hidden"));
-$("volume").addEventListener("input", (e) => {
-  localStorage.setItem("spotiaisexs-volume", e.target.value);
-  if (ytReady) ytPlayer.setVolume(Number(e.target.value));
-});
-$("volume").value = localStorage.getItem("spotiaisexs-volume") || "80";
+$("next").addEventListener("click", () => (core.isActiveHere() ? core.skip(1) : core.isRemote() ? core.sendCommand("next") : null));
+$("prev").addEventListener("click", () => (core.isActiveHere() ? core.skip(-1) : core.isRemote() ? core.sendCommand("previous") : null));
+$("shuffle").addEventListener("click", () => core.toggleShuffle());
+$("volume").value = core.store.get("spotiaisexs-volume", 80);
+$("volume").addEventListener("input", (e) => core.setVolume(e.target.value));
+["now-like", "bar-like"].forEach((id) => $(id).addEventListener("click", () => { core.toggleLike(core.currentTrack()); ui.render(); }));
+$("bar-track").addEventListener("click", () => $("app").classList.toggle("now-open"));
+$("now-close").addEventListener("click", () => $("app").classList.remove("now-open"));
+$("logout").addEventListener("click", () => core.logout());
 
-$("bar").addEventListener("click", (event) => {
-  const duration = currentDuration();
-  if (!duration) return;
-  const rect = event.currentTarget.getBoundingClientRect();
-  const ms = Math.round(((event.clientX - rect.left) / rect.width) * duration);
-  if (isActiveHere()) seekTo(ms);
-  else if (isRemote()) sendCommand("seek", { positionMs: ms });
+// El dial: mientras se mueve cambia el texto; al soltar se aplica.
+document.addEventListener("input", (e) => {
+  if (!e.target.matches(".dial")) return;
+  const zone = e.target.closest(".dial-box")?.querySelector(".dial-zone");
+  if (zone) zone.textContent = core.distanceLabel(Number(e.target.value));
+});
+document.addEventListener("change", (e) => {
+  if (e.target.matches(".dial")) core.setDistance(Number(e.target.value));
 });
 
-$("jam-btn").addEventListener("click", () => {
-  $("jam-panel").hidden = !$("jam-panel").hidden;
-  $("device-menu").hidden = true;
-  renderJamPanel();
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("menu").hidden) return closeMenu();
+  if (e.target.closest("input, textarea")) return;
+  if (e.code === "Space" && !e.target.closest("button, a")) { e.preventDefault(); $("play").click(); }
+  if (e.code === "ArrowRight" && e.shiftKey) $("next").click();
+  if (e.code === "ArrowLeft" && e.shiftKey) $("prev").click();
 });
-
-$("device-btn").addEventListener("click", () => {
-  $("device-menu").hidden = !$("device-menu").hidden;
-  renderDevices();
-});
-document.addEventListener("click", (event) => {
-  if (!event.target.closest(".devices")) $("device-menu").hidden = true;
-  if (!event.target.closest(".jam")) $("jam-panel").hidden = true;
-});
-
-async function chooseDevice(id) {
-  $("device-menu").hidden = true;
-  if (id === playback?.activeDevice && isDeviceOnline(id)) return;
-  if (id === deviceId) return playHere();
-  // Primero la posición exacta, luego la orden: así el otro coge el punto justo.
-  if (isActiveHere()) await publish();
-  push(ref(db, `${base}/commands/${id}`), { type: "transfer", from: deviceId, at: serverTimestamp() });
-  toast(`Pasando la música a ${devices[id]?.name || "el otro dispositivo"}…`);
-}
-
-document.querySelectorAll(".nav-item").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
-
-// En el móvil, Jam y dispositivos van arriba a la derecha (la barra inferior es la cápsula fina).
-{
-  const narrow = matchMedia("(max-width: 900px)");
-  const right = document.querySelector(".pb-right");
-  const home = right.parentElement;
-  const place = () => (narrow.matches ? $("mobile-top") : home).appendChild(right);
-  narrow.addEventListener("change", place);
-  place();
-}
-
-$("search-form").addEventListener("submit", (e) => {
-  e.preventDefault();
-  runSearch($("search-input").value.trim());
-});
-
-document.addEventListener("keydown", (event) => {
-  if (event.target.closest("input")) return;
-  if (event.code === "Space") { event.preventDefault(); $("play").click(); }
-  if (event.code === "ArrowRight" && event.shiftKey) $("next").click();
-  if (event.code === "ArrowLeft" && event.shiftKey) $("prev").click();
-});
-
-// Teclas multimedia y controles del sistema.
-function updateMediaSession(track, playing) {
-  if (!("mediaSession" in navigator) || !track) return;
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: track.title, artist: track.artist, album: track.album || "",
-    artwork: artFor(track) ? [{ src: artFor(track), sizes: "480x360" }] : [],
-  });
-  navigator.mediaSession.playbackState = playing ? "playing" : "paused";
-}
 if ("mediaSession" in navigator) {
   navigator.mediaSession.setActionHandler("play", () => $("play").click());
   navigator.mediaSession.setActionHandler("pause", () => $("play").click());
@@ -685,562 +500,148 @@ if ("mediaSession" in navigator) {
   navigator.mediaSession.setActionHandler("previoustrack", () => $("prev").click());
 }
 
-// ── Biblioteca editable desde la web ────────────────────────────────────
-// Los cambios se ven aquí al momento (se escriben en library/…) y además se
-// dejan en libraryInbox para que el teléfono los aplique a su base de datos
-// cuando se conecte. Así la web funciona sola y nada se pierde.
-
-const likedEntry = () => Object.entries(library).find(([, pl]) => pl?.mode === "liked");
-const sameSong = (a, b) => !!a && !!b && ((a.videoId && a.videoId === b.videoId) ||
-  (norm(a.title) === norm(b.title) && norm(a.artist) === norm(b.artist)));
-const isLiked = (track) => !!track && !!likedEntry()?.[1]?.tracks?.some((t) => sameSong(t, track));
-const customPlaylists = () => sortedPlaylists().filter((pl) => pl.mode !== "liked" && pl.mode !== "liked_songs");
-
-function libraryOp(op) {
-  if (!base) return;
-  push(ref(db, `${base}/libraryInbox`), { ...op, at: serverTimestamp() }).catch(() => {});
+// En pantallas estrechas, Jam y dispositivos van dentro del panel de lo que suena.
+{
+  const narrow = matchMedia("(max-width: 760px)");
+  const right = document.querySelector(".bar-right");
+  const home = right.parentElement;
+  const place = () => (narrow.matches ? $("now").insertBefore(right, $("dial-box")) : home.appendChild(right));
+  narrow.addEventListener("change", place);
+  place();
 }
 
-function saveLibraryPlaylist(id, pl) {
-  library = { ...library, [id]: pl };
-  set(ref(db, `${base}/library/playlists/${id}`), pl).catch(() => {});
-  renderLibrary();
-  renderView();
-}
+// ── Pulsaciones en las páginas ──────────────────────────────────────────
+document.addEventListener("submit", (e) => {
+  if (e.target.id !== "search-form") return;
+  e.preventDefault();
+  const q = $("search-input").value.trim();
+  if (!q) return;
+  if (location.hash === `#/buscar/${enc(q)}`) runSearch(q); else location.hash = `#/buscar/${enc(q)}`;
+});
 
-function toggleLike(track) {
-  if (!track?.videoId) return;
-  const t = clean(track);
-  const entry = likedEntry();
-  if (isLiked(track)) {
-    const [id, pl] = entry;
-    saveLibraryPlaylist(id, { ...pl, tracks: (pl.tracks || []).filter((x) => !sameSong(x, track)) });
-    libraryOp({ op: "unlike", track: t });
-    toast("Quitada de Me gusta");
-  } else {
-    const [id, pl] = entry || [`web-liked`, { title: "Me gusta", subtitle: "", mode: "liked", createdAt: Date.now(), tracks: [] }];
-    saveLibraryPlaylist(id, { ...pl, tracks: [...(pl.tracks || []), t] });
-    libraryOp({ op: "like", track: t });
-    toast("Añadida a Me gusta");
+function playList(listId, index) {
+  const tracks = lists.get(listId);
+  if (!tracks?.length) return;
+  if (listId === "queue") {
+    if (index === 0) return;
+    if (core.isActiveHere()) return core.jumpTo(S.index + index);
+    if (core.isRemote()) return core.sendCommand("playIndex", { index });
+    return core.playTracks(tracks, index, 0, { here: true });
   }
-  render();
+  // Una canción buscada arranca su radio; el resto de listas suenan tal cual.
+  if (listId === "search" || listId === "search-local") return core.playTracks([tracks[index]], 0);
+  core.playTracks(tracks, index);
 }
 
-function addToPlaylist(id, track) {
-  const pl = library[id];
-  if (!pl || !track?.videoId) return;
-  if ((pl.tracks || []).some((x) => sameSong(x, track))) return toast(`Ya está en «${pl.title}»`);
-  saveLibraryPlaylist(id, { ...pl, tracks: [...(pl.tracks || []), clean(track)] });
-  libraryOp({ op: "add", playlistId: id, title: pl.title, track: clean(track) });
-  toast(`Añadida a «${pl.title}»`);
-}
+document.addEventListener("click", (e) => {
+  const actEl = e.target.closest("[data-act]");
+  const rowEl = e.target.closest(".row[data-list]");
+  const act = actEl?.dataset.act;
+  const rowTrack = rowEl ? lists.get(rowEl.dataset.list)?.[Number(rowEl.dataset.i)] : null;
+  if (act === "more" && rowTrack) return openTrackMenu(rowTrack, actEl);
+  if (act === "like" && rowTrack) { core.toggleLike(rowTrack); renderPage(); ui.render(); return; }
+  if (rowEl && !act) return playList(rowEl.dataset.list, Number(rowEl.dataset.i));
+  if (!act) return;
+  const page = lists.get("page") || [];
+  const data = pageCache.get(pageKey())?.data;
+  switch (act) {
+    case "back": history.length > 1 ? history.back() : (location.hash = "#/"); break;
+    case "station": core.playStation(actEl.dataset.id); break;
+    case "resume": core.playHere(); break;
+    case "play-recent": { const t = S.recents[Number(actEl.dataset.i)]; if (t) core.playTracks([t], 0); break; }
+    case "play-list": core.playTracks(lists.get(actEl.dataset.list) || [], 0); break;
+    case "shuffle-list": core.playTracks(core.shuffled(lists.get(actEl.dataset.list) || []), 0); break;
+    case "play-top": if (search.results?.songs[0]) core.playTracks([search.results.songs[0]], 0); break;
+    case "top-more": openTrackMenu(search.results?.songs[0], actEl); break;
+    case "artist-radio": { const seed = page[Math.floor(Math.random() * Math.min(5, page.length))]; if (seed) core.startRadio(seed, { label: `Emisora de ${data?.name || seed.artist}` }); break; }
+    case "show-all": pageCache.get(pageKey()).all = true; renderPage(); break;
+    case "save-list": if (data) core.createPlaylist(route.name === "thisis" ? `Esto es ${data.artist.name}` : data.title, data.tracks, route.name === "thisis" ? data.artist.artworkUrl : data.artworkUrl); break;
+    case "new-playlist": openNewPlaylist(actEl); break;
+  }
+});
+$("new-playlist").addEventListener("click", (e) => openNewPlaylist(e.currentTarget));
+document.addEventListener("contextmenu", (e) => {
+  const rowEl = e.target.closest(".row[data-list]");
+  const t = rowEl ? lists.get(rowEl.dataset.list)?.[Number(rowEl.dataset.i)] : null;
+  if (!t) return;
+  e.preventDefault();
+  openTrackMenu(t, { getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY }) });
+});
 
-function createPlaylist(title, track = null) {
-  const name = (title || "").trim().slice(0, 100);
-  if (!name) return;
-  const id = `web-${Date.now().toString(36)}`;
-  saveLibraryPlaylist(id, { title: name, subtitle: "", mode: "custom", createdAt: Date.now(), tracks: track ? [clean(track)] : [] });
-  libraryOp({ op: "create", title: name, ...(track ? { track: clean(track) } : {}) });
-  toast(track ? `Creada «${name}» con la canción` : `Creada «${name}»`);
-}
-
-// ── Menú de una canción (⋯ o clic derecho) ─────────────────────────────
-const ICONS = {
-  queue: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h12"/><path d="M4 12h12"/><path d="M4 18h7"/><path d="M18 14v6"/><path d="M15 17h6"/></svg>',
-  radio: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="2"/><path d="M8.5 15.5a5 5 0 0 1 0-7"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M5.6 18.4a9 9 0 0 1 0-12.8"/><path d="M18.4 5.6a9 9 0 0 1 0 12.8"/></svg>',
-  heart: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2z"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
-  list: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4v16"/><path d="M10 4v16"/><path d="m15 4.5 4.5 15"/></svg>',
-  back: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>',
-  more: '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
-};
+// ── Menú de una canción ─────────────────────────────────────────────────
 let menuAnchor = null;
-
 function openTrackMenu(track, anchor) {
   if (!track) return;
   menuAnchor = anchor;
   renderMenu(track, "main");
 }
-
-function renderMenu(track, page) {
+function showMenu(html) {
   const menu = $("menu");
-  const head = `<div class="menu-head">${thumb(artFor(track))}<div class="t-text"><div class="t-title">${esc(track.title)}</div><div class="t-artist">${esc(track.artist)}</div></div></div>`;
-  if (page === "main") {
-    const liked = isLiked(track);
-    menu.innerHTML = head + `
-      <button class="menu-item" data-act="queue" role="menuitem">${ICONS.queue}Añadir a la cola</button>
-      <button class="menu-item" data-act="radio" role="menuitem">${ICONS.radio}Iniciar radio</button>
-      <div class="menu-sep"></div>
-      <button class="menu-item${liked ? " on" : ""}" data-act="like" role="menuitem">${ICONS.heart}${liked ? "Quitar de Me gusta" : "Añadir a Me gusta"}</button>
-      <button class="menu-item" data-act="playlists" role="menuitem">${ICONS.list}Añadir a una playlist</button>`;
-  } else if (page === "playlists") {
-    const pls = customPlaylists();
-    menu.innerHTML = head + `
-      <button class="menu-item menu-back" data-act="back" role="menuitem">${ICONS.back}Volver</button>
-      <button class="menu-item" data-act="new" role="menuitem">${ICONS.plus}Nueva playlist</button>
-      ${pls.length ? '<div class="menu-sep"></div>' : ""}
-      ${pls.map((pl) => `<button class="menu-item" data-act="add" data-id="${esc(pl.id)}" role="menuitem">${thumb(pl.artworkUrl || artFor(pl.tracks[0]))}<span>${esc(pl.title)}</span></button>`).join("")}`;
-    menu.querySelectorAll(".menu-item .thumb, .menu-item .thumb-ph").forEach((el) => { el.style.cssText = "width:32px;height:32px;border-radius:6px"; });
-  } else if (page === "new") {
-    menu.innerHTML = head + `
-      <form id="new-pl-form" style="display:flex;flex-direction:column;gap:10px;padding:6px">
-        <input id="new-pl-name" class="field" maxlength="100" placeholder="Nombre de la playlist" aria-label="Nombre de la playlist" required>
-        <button class="btn-accent" type="submit">Crear y añadir</button>
-      </form>`;
-    $("new-pl-form").addEventListener("submit", (e) => { e.preventDefault(); createPlaylist($("new-pl-name").value, track); closeMenu(); });
-    setTimeout(() => $("new-pl-name").focus(), 0);
-  }
-  menu.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => {
-    const act = b.dataset.act;
-    if (act === "queue") { addToQueue(track); closeMenu(); }
-    else if (act === "radio") { startRadioHere(track, "focused"); closeMenu(); }
-    else if (act === "like") { toggleLike(track); closeMenu(); }
-    else if (act === "playlists") renderMenu(track, "playlists");
-    else if (act === "back") renderMenu(track, "main");
-    else if (act === "new") renderMenu(track, "new");
-    else if (act === "add") { addToPlaylist(b.dataset.id, track); closeMenu(); }
-  }));
+  menu.innerHTML = html;
   menu.hidden = false;
   $("menu-scrim").hidden = false;
-  placeMenu();
-  menu.querySelector("[data-act], input")?.focus();
-}
-
-function placeMenu() {
-  const menu = $("menu");
-  const r = menuAnchor?.getBoundingClientRect?.() || menuAnchor || { left: innerWidth / 2, right: innerWidth / 2, top: innerHeight / 2, bottom: innerHeight / 2 };
+  const r = menuAnchor?.getBoundingClientRect?.() || { left: innerWidth / 2, right: innerWidth / 2, top: innerHeight / 2, bottom: innerHeight / 2 };
   const w = menu.offsetWidth, h = menu.offsetHeight;
-  let left = Math.min(innerWidth - w - 8, Math.max(8, (r.right ?? r.left) - w));
   let top = r.bottom + 6;
   if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 6);
-  menu.style.left = `${left}px`;
+  menu.style.left = `${Math.min(innerWidth - w - 8, Math.max(8, r.right - w))}px`;
   menu.style.top = `${top}px`;
+  menu.querySelector("button, input")?.focus();
 }
-
-function closeMenu() {
-  $("menu").hidden = true;
-  $("menu-scrim").hidden = true;
-  menuAnchor = null;
-}
+function closeMenu() { $("menu").hidden = true; $("menu-scrim").hidden = true; menuAnchor = null; }
 $("menu-scrim").addEventListener("click", closeMenu);
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("menu").hidden) closeMenu(); });
 
-$("new-playlist").addEventListener("click", (e) => {
-  menuAnchor = e.currentTarget;
-  const menu = $("menu");
-  menu.innerHTML = `<form id="new-pl-form" style="display:flex;flex-direction:column;gap:10px;padding:6px">
-      <input id="new-pl-name" class="field" maxlength="100" placeholder="Nombre de la playlist" aria-label="Nombre de la playlist" required>
-      <button class="btn-accent" type="submit">Crear playlist</button></form>`;
-  $("new-pl-form").addEventListener("submit", (ev) => { ev.preventDefault(); createPlaylist($("new-pl-name").value); closeMenu(); });
-  menu.hidden = false;
-  $("menu-scrim").hidden = false;
-  const r = e.currentTarget.getBoundingClientRect();
-  menu.style.left = `${Math.min(innerWidth - menu.offsetWidth - 8, r.left)}px`;
-  menu.style.top = `${r.bottom + 6}px`;
-  $("new-pl-name").focus();
-});
-
-["np-like", "pb-like"].forEach((id) => $(id).addEventListener("click", () => toggleLike(currentTrack())));
-
-// ── Búsqueda ────────────────────────────────────────────────────────────
-function allLibraryTracks() {
-  const seen = new Set();
-  const out = [];
-  Object.values(library).forEach((pl) => (pl.tracks || []).forEach((t) => {
-    if (t?.videoId && !seen.has(t.videoId)) { seen.add(t.videoId); out.push(t); }
-  }));
-  return out;
-}
-
-const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
-async function runSearch(query) {
-  if (!query) return;
-  const tokens = norm(query).split(/\s+/).filter(Boolean);
-  const local = allLibraryTracks()
-    .filter((t) => { const hay = norm(`${t.title} ${t.artist} ${t.album || ""}`); return tokens.every((k) => hay.includes(k)); })
-    .slice(0, 30);
-  lastSearch = { query, local, remote: [], error: "", loading: !!youtubeApiKey };
-  renderView();
-  if (!youtubeApiKey) return;
-  try {
-    lastSearch.remote = await youtubeSearch(query);
-  } catch (error) {
-    lastSearch.error = error.message;
-  }
-  lastSearch.loading = false;
-  if (lastSearch.query === query) renderView();
-}
-
-// ── Pintado ─────────────────────────────────────────────────────────────
-const songs = (n) => `${n} ${n === 1 ? "canción" : "canciones"}`;
-const fmt = (ms) => {
-  const s = Math.max(0, Math.floor((ms || 0) / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-};
-const artFor = (t) => t?.artworkUrl || (t?.videoId ? `https://i.ytimg.com/vi/${t.videoId}/hqdefault.jpg` : "");
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const LOGO_SVG = '<svg viewBox="0 0 100 100" width="40%" height="40%" fill="currentColor" aria-hidden="true"><rect x="21.5" y="37" width="9" height="26" rx="4.5"/><rect x="33.5" y="28" width="9" height="44" rx="4.5"/><rect x="45.5" y="20" width="9" height="60" rx="4.5"/><rect x="57.5" y="30" width="9" height="40" rx="4.5"/><rect x="69.5" y="39" width="9" height="22" rx="4.5"/></svg>';
-
-/** Imagen con reserva: si no carga, se sustituye por el logo. */
-function thumb(url, cls = "thumb") {
-  if (!url) return `<div class="${cls === "thumb" ? "thumb-ph" : cls}">${LOGO_SVG}</div>`;
-  return `<img class="${cls}" src="${esc(url)}" alt="" loading="lazy" data-fallback>`;
-}
-document.addEventListener("error", (e) => {
-  const img = e.target;
-  if (img.tagName === "IMG" && img.hasAttribute("data-fallback")) {
-    const ph = document.createElement("div");
-    ph.className = img.className.replace("thumb", "thumb-ph");
-    ph.innerHTML = LOGO_SVG;
-    img.replaceWith(ph);
-  }
-}, true);
-
-function currentTrack() {
-  return isActiveHere() ? localQueue[localIndex] : playback?.track;
-}
-function currentDuration() {
-  if (isActiveHere() && ytReady && ytPlayer.getDuration?.() > 0) return ytPlayer.getDuration() * 1000;
-  return playback?.durationMs || playback?.track?.durationMs || 0;
-}
-function currentPosition() {
-  if (isActiveHere() && ytReady) return (ytPlayer.getCurrentTime?.() || 0) * 1000;
-  return estimatedPosition(playback);
-}
-function isPlayingNow() {
-  if (isActiveHere()) {
-    if (!ytReady) return false;
-    const s = ytPlayer.getPlayerState?.();
-    return s === YT.PlayerState.PLAYING || s === YT.PlayerState.BUFFERING;
-  }
-  return !!playback?.isPlaying && isDeviceOnline(playback?.activeDevice);
-}
-
-function setImg(imgId, emptyId, url) {
-  const img = $(imgId);
-  if (url && url !== img.dataset.failed) {
-    if (img.getAttribute("src") !== url) img.src = url;
-    img.hidden = false;
-    $(emptyId).hidden = true;
+function renderMenu(track, page) {
+  const head = `<div class="menu-head">${img(core.artFor(track))}<div class="row-text"><div class="row-title"><span>${esc(track.title)}</span></div><div class="row-sub">${esc(track.artist || "")}</div></div></div>`;
+  const item = (act, icon, text, extra = "") => `<button class="menu-item${extra}" data-menu="${act}" role="menuitem">${icon}${esc(text)}</button>`;
+  if (page === "main") {
+    const liked = core.isLiked(track);
+    showMenu(head + item("queue", I.queue, "Añadir a la cola") + item("radio", I.radio, "Iniciar radio")
+      + item("like", I.heart, liked ? "Quitar de Me gusta" : "Añadir a Me gusta", liked ? " on" : "") + item("playlists", I.list, "Añadir a una playlist")
+      + (catalogReady && track.artist ? item("artist", I.person, "Ver artista") : "") + (catalogReady && track.albumId ? item("album", I.album, "Ver álbum") : ""));
+  } else if (page === "playlists") {
+    const pls = core.sortedPlaylists().filter((pl) => pl.mode !== "liked" && pl.mode !== "liked_songs");
+    showMenu(head + item("back", I.back, "Volver") + item("new", I.plus, "Nueva playlist")
+      + pls.map((pl) => `<button class="menu-item" data-menu="add" data-id="${esc(pl.id)}" role="menuitem">${I.list}${esc(pl.title)}</button>`).join(""));
   } else {
-    img.hidden = true;
-    $(emptyId).hidden = false;
+    showMenu(head + `<form id="new-pl-form" class="menu-form"><input id="new-pl-name" class="field" maxlength="100" placeholder="Nombre de la playlist" aria-label="Nombre de la playlist" required>
+      <button class="btn-fill" type="submit">Crear y añadir</button></form>`);
+    $("new-pl-form").addEventListener("submit", (e) => { e.preventDefault(); core.createPlaylist($("new-pl-name").value, [track]); closeMenu(); });
   }
+  $("menu").querySelectorAll("[data-menu]").forEach((b) => b.addEventListener("click", () => {
+    const act = b.dataset.menu;
+    if (act === "playlists" || act === "new") return renderMenu(track, act);
+    if (act === "back") return renderMenu(track, "main");
+    if (act === "queue") core.addToQueue(track);
+    else if (act === "radio") core.startRadio(track);
+    else if (act === "like") { core.toggleLike(track); renderPage(); ui.render(); }
+    else if (act === "add") core.addToPlaylist(b.dataset.id, track);
+    else if (act === "artist") location.hash = track.artistId ? `#/artista/${enc(track.artistId)}` : `#/artista/n/${enc(String(track.artist).split(/,|&| feat\.? | ft\.? /i)[0].trim())}`;
+    else if (act === "album") location.hash = `#/album/${enc(track.albumId)}`;
+    closeMenu();
+  }));
 }
-[["np-cover", "np-empty"], ["pb-cover", "pb-cover-empty"]].forEach(([imgId, emptyId]) => {
-  $(imgId).addEventListener("error", () => {
-    $(imgId).dataset.failed = $(imgId).getAttribute("src");
-    $(imgId).hidden = true;
-    $(emptyId).hidden = false;
-  });
+
+function openNewPlaylist(anchor) {
+  menuAnchor = anchor;
+  showMenu(`<form id="new-pl-form" class="menu-form"><input id="new-pl-name" class="field" maxlength="100" placeholder="Nombre de la playlist" aria-label="Nombre de la playlist" required>
+    <button class="btn-fill" type="submit">Crear playlist</button></form>`);
+  $("new-pl-form").addEventListener("submit", (e) => { e.preventDefault(); const id = core.createPlaylist($("new-pl-name").value); closeMenu(); if (id) location.hash = `#/playlist/${enc(id)}`; });
+}
+
+// ── Sesión ──────────────────────────────────────────────────────────────
+ui.session = (signedIn) => {
+  $("login").hidden = signedIn;
+  $("app").hidden = !signedIn;
+  if (signedIn) { navigate(); ui.render(); }
+};
+ui.library = () => { renderPage(); ui.render(); };
+
+$("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("login-error").textContent = "";
+  $("login-error").textContent = await core.login($("login-email").value, $("login-password").value);
 });
 
-function render() {
-  const track = currentTrack();
-  $("np-title").textContent = track?.title || "Nada sonando";
-  $("np-artist").textContent = track?.artist || "Busca algo o abre una playlist";
-  $("pb-title").textContent = track?.title || "—";
-  $("pb-artist").textContent = track?.artist || "";
-  document.title = track ? `${track.title} · ${track.artist}` : "SpotiAisexs";
-  setImg("np-cover", "np-empty", artFor(track));
-  setImg("pb-cover", "pb-cover-empty", artFor(track));
-  if (!isActiveHere()) showVideo(false);
-  updateAccent(track);
-  const liked = isLiked(track);
-  ["np-like", "pb-like"].forEach((id) => {
-    $(id).setAttribute("aria-pressed", String(liked));
-    $(id).setAttribute("aria-label", liked ? "Quitar de Me gusta" : "Añadir a Me gusta");
-    $(id).disabled = !track?.videoId;
-  });
-
-  const playing = isPlayingNow();
-  $("ic-play").toggleAttribute("hidden", playing);
-  $("ic-pause").toggleAttribute("hidden", !playing);
-  $("play").setAttribute("aria-label", playing ? "Pausar" : "Reproducir");
-
-  let label = "Este navegador";
-  if (isRemote()) label = `Escuchando en ${playback.activeDeviceName || "otro dispositivo"}`;
-  $("device-label").textContent = label;
-  $("device-btn").classList.toggle("remote", isRemote());
-
-  renderQueue();
-  renderDevices();
-  markPlayingRows();
-}
-
-function renderQueue() {
-  const list = $("queue-list");
-  const queue = isActiveHere() ? localQueue.slice(localIndex, localIndex + 50) : (playback?.queue || []);
-  $("queue-empty").hidden = queue.length > 0;
-  const label = $("radio-label");
-  label.hidden = !(isActiveHere() && radio);
-  label.textContent = radioLoading ? "Buscando más canciones…" : radio?.style === "explore" ? "Radio infinita" : `Radio de ${radio?.anchor?.artist || "esta canción"}`;
-  list.innerHTML = queue.map((t, i) => `
-    <li class="queue-item${i === 0 ? " current" : ""}" data-i="${i}">
-      ${thumb(artFor(t))}
-      <div class="q-text"><div class="q-title">${esc(t.title)}</div><div class="q-artist">${t.addedBy ? `<span class="q-by">${esc(t.addedBy)}</span>` : ""}${esc(t.artist)}</div></div>
-      <button class="t-more" data-more="${i}" aria-label="Más opciones para ${esc(t.title)}" style="opacity:1">${ICONS.more}</button>
-    </li>`).join("");
-  list.querySelectorAll(".queue-item").forEach((li) => li.addEventListener("click", () => {
-    const i = Number(li.dataset.i);
-    if (i === 0) return;
-    if (isActiveHere()) { noteListened(); loadIndex(localIndex + i, 0); }
-    else if (isRemote()) sendCommand("playIndex", { index: i });
-    else playTracks(queue, i, 0, { here: true });
-  }));
-  list.querySelectorAll("[data-more]").forEach((b) => b.addEventListener("click", (e) => {
-    e.stopPropagation();
-    openTrackMenu(queue[Number(b.dataset.more)], b);
-  }));
-}
-
-/** El acento y el fondo siguen a la portada que suena. */
-function updateAccent(track) {
-  const url = artFor(track);
-  const key = track?.videoId || track?.title || "";
-  if (key === accentKey) return;
-  accentKey = key;
-  const img = $("backdrop-img");
-  if (url) { if (img.getAttribute("src") !== url) img.src = url; } else img.removeAttribute("src");
-  accentFor(url, key).then((tone) => { if (accentKey === key) applyAccent(tone); });
-}
-
-function renderDevices() {
-  const menu = $("device-menu");
-  if (menu.hidden) return;
-  const entries = Object.entries(devices).filter(([id]) => id !== deviceId && isDeviceOnline(id));
-  entries.unshift([deviceId, { name: deviceName, type: "web" }]);
-  const activeId = isRemote() || isActiveHere() ? playback.activeDevice : null;
-  menu.innerHTML = `<h3>Conectar a un dispositivo</h3>` + entries.map(([id, d]) => `
-    <button class="device-item${id === activeId ? " active" : ""}" data-id="${esc(id)}">
-      ${d.type === "phone"
-        ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>'
-        : '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/></svg>'}
-      <span>${esc(id === deviceId ? "Este navegador" : d.name)}<small>${id === activeId ? "Reproduciendo" : id === deviceId ? esc(deviceName) : "Disponible"}</small></span>
-    </button>`).join("")
-    + (entries.length === 1 ? '<p class="muted small" style="margin:6px 12px">Abre la app en el teléfono para verlo aquí.</p>' : "");
-  menu.querySelectorAll(".device-item").forEach((b) => b.addEventListener("click", () => chooseDevice(b.dataset.id)));
-}
-
-function sortedPlaylists() {
-  return Object.entries(library)
-    .map(([id, pl]) => ({ id, ...pl, tracks: pl.tracks || [] }))
-    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.mode === "liked" ? 1 : 0) - (a.mode === "liked" ? 1 : 0) || (b.createdAt || 0) - (a.createdAt || 0));
-}
-
-function renderLibrary() {
-  const list = $("library-list");
-  const items = sortedPlaylists();
-  list.innerHTML = items.length
-    ? items.map((pl) => `
-      <li class="lib-item${pl.id === openPlaylistId && currentView === "playlist" ? " active" : ""}" data-id="${esc(pl.id)}">
-        ${thumb(pl.artworkUrl || artFor(pl.tracks[0]))}
-        <div class="lib-text"><div class="lib-title">${esc(pl.title)}</div><div class="lib-sub">Playlist · ${songs(pl.tracks.length)}</div></div>
-      </li>`).join("")
-    : '<li class="muted small" style="padding:8px 10px">Conecta el teléfono para traer tus playlists.</li>';
-  list.querySelectorAll(".lib-item").forEach((li) => li.addEventListener("click", () => openPlaylist(li.dataset.id)));
-}
-
-function showView(view) {
-  currentView = view;
-  ["home", "search", "library", "playlist"].forEach((v) => { $(`view-${v}`).hidden = v !== view; });
-  document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
-  $("main").scrollTop = 0;
-  renderView();
-  if (view === "search") setTimeout(() => $("search-input").focus(), 0);
-}
-
-function openPlaylist(id) {
-  openPlaylistId = id;
-  showView("playlist");
-  renderLibrary();
-}
-
-function renderView() {
-  if (currentView === "home") renderHome();
-  if (currentView === "search") renderSearch();
-  if (currentView === "library") renderLibraryView();
-  if (currentView === "playlist") renderPlaylist();
-  markPlayingRows();
-}
-
-function greeting() {
-  const h = new Date().getHours();
-  return h < 6 ? "Buenas noches" : h < 13 ? "Buenos días" : h < 21 ? "Buenas tardes" : "Buenas noches";
-}
-
-function renderHome() {
-  const pls = sortedPlaylists();
-  const resume = playback?.track && !isActiveHere() && !isRemote() ? playback : null;
-  const canRadio = !!youtubeApiKey && (allLibraryTracks().length > 0 || !!currentTrack());
-  const EQ = '<div class="hero-eq" aria-hidden="true"><i style="height:45%"></i><i style="height:75%"></i><i style="height:100%"></i><i style="height:65%"></i><i style="height:38%"></i></div>';
-  const PLAY_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5.2v13.6l11-6.8z"/></svg>';
-  $("view-home").innerHTML = `
-    <h1>${greeting()}</h1>
-    ${resume || canRadio ? `<div class="hero-row">
-      ${resume ? `
-        <button class="hero" id="resume">
-          ${artFor(resume.track) ? `<img src="${esc(artFor(resume.track))}" alt="" data-fallback>` : ""}
-          <div class="hero-body">
-            <span class="hero-kicker">Sigue donde lo dejaste</span>
-            <div><div class="hero-title">${esc(resume.track.title)}</div><div class="hero-sub">${esc(resume.track.artist)} · en ${esc(resume.activeDeviceName || "otro dispositivo")}</div></div>
-            <span class="hero-cta">${PLAY_ICON}Reanudar aquí</span>
-          </div>
-        </button>` : ""}
-      ${canRadio ? `
-        <button class="hero radio" id="infinite-radio">
-          ${EQ}
-          <div class="hero-body">
-            <span class="hero-kicker">Para ti</span>
-            <div><div class="hero-title">Radio infinita</div><div class="hero-sub">Canciones nuevas a partir de lo que te gusta</div></div>
-            <span class="hero-cta">${PLAY_ICON}Empezar</span>
-          </div>
-        </button>` : ""}
-    </div>` : ""}
-    ${pls.length ? `
-      <div class="quick">${pls.slice(0, 6).map((pl) => `
-        <button class="quick-item" data-id="${esc(pl.id)}">${thumb(pl.artworkUrl || artFor(pl.tracks[0]))}<span>${esc(pl.title)}</span></button>`).join("")}
-      </div>
-      <h2>Tus playlists</h2>
-      <div class="grid">${pls.map((pl) => card(pl)).join("")}</div>`
-    : `<div class="empty-state">
-        <strong>Tu biblioteca está vacía.</strong><br>
-        Enlaza el teléfono en <em>Ajustes → Web y Jam</em> y tus playlists aparecerán aquí, aunque luego el teléfono esté apagado.
-        ${youtubeApiKey ? "También puedes buscar cualquier canción, darle a Me gusta y crear playlists desde aquí." : ""}
-      </div>`}`;
-  $("resume")?.addEventListener("click", playHere);
-  $("infinite-radio")?.addEventListener("click", () => {
-    const pool = allLibraryTracks();
-    const liked = likedEntry()?.[1]?.tracks || [];
-    const source = liked.length ? liked : pool;
-    const seed = source.length ? source[Math.floor(Math.random() * source.length)] : currentTrack();
-    startRadioHere(seed, "explore");
-  });
-  bindCards($("view-home"));
-}
-
-function card(pl) {
-  return `<div class="card" data-id="${esc(pl.id)}" role="button" tabindex="0">
-    ${thumb(pl.artworkUrl || artFor(pl.tracks[0]))}
-    <div><div class="card-title">${esc(pl.title)}</div><div class="card-sub">${songs(pl.tracks.length)}</div></div>
-    <button class="card-play" data-play="${esc(pl.id)}" aria-label="Reproducir ${esc(pl.title)}"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg></button>
-  </div>`;
-}
-
-function bindCards(root) {
-  root.querySelectorAll("[data-play]").forEach((b) => b.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const pl = library[b.dataset.play];
-    if (pl) playTracks(pl.tracks || [], 0);
-  }));
-  root.querySelectorAll(".card[data-id], .quick-item[data-id]").forEach((c) => c.addEventListener("click", () => openPlaylist(c.dataset.id)));
-}
-
-function renderLibraryView() {
-  const pls = sortedPlaylists();
-  $("view-library").innerHTML = `<h1>Biblioteca</h1>${pls.length ? `<div class="grid">${pls.map(card).join("")}</div>` : '<p class="muted">Conecta el teléfono para traer tus playlists.</p>'}`;
-  bindCards($("view-library"));
-}
-
-function trackRows(tracks, { numbered = true } = {}) {
-  return `<ol class="tracks">${tracks.map((t, i) => {
-    const liked = isLiked(t);
-    return `
-    <li class="track${t.playable === false ? " blocked" : ""}" data-i="${i}" data-video="${esc(t.videoId)}">
-      <span class="t-num">${numbered ? i + 1 : ""}</span>
-      ${thumb(artFor(t))}
-      <div class="t-text"><div class="t-title">${esc(t.title)}</div><div class="t-artist">${t.playable === false ? '<span class="t-badge">Solo en el teléfono</span>' : ""}${esc(t.artist)}${t.durationMs ? ` · ${fmt(t.durationMs)}` : ""}</div></div>
-      <button class="t-like" data-like="${i}" aria-pressed="${liked}" aria-label="${liked ? "Quitar de Me gusta" : "Añadir a Me gusta"}">${ICONS.heart.replace('width="20" height="20"', 'width="18" height="18"')}</button>
-      <button class="t-more" data-more="${i}" aria-label="Más opciones para ${esc(t.title)}">${ICONS.more}</button>
-    </li>`;
-  }).join("")}</ol>`;
-}
-
-/**
- * Clic: playlist → suena desde esa canción; resultado de búsqueda → esa
- * canción y su radio. ⋯ o clic derecho: menú (cola, radio, Me gusta, playlist).
- */
-function bindTrackRows(root, tracks, { single = false } = {}) {
-  root.querySelectorAll(".track").forEach((row) => {
-    const i = Number(row.dataset.i);
-    row.addEventListener("click", () => (single ? playTracks([tracks[i]], 0) : playTracks(tracks, i)));
-    row.addEventListener("contextmenu", (e) => { e.preventDefault(); openTrackMenu(tracks[i], { left: e.clientX, right: e.clientX + 270, top: e.clientY, bottom: e.clientY }); });
-  });
-  root.querySelectorAll("[data-more]").forEach((b) => b.addEventListener("click", (e) => {
-    e.stopPropagation();
-    openTrackMenu(tracks[Number(b.dataset.more)], b);
-  }));
-  root.querySelectorAll("[data-like]").forEach((b) => b.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toggleLike(tracks[Number(b.dataset.like)]);
-  }));
-}
-
-function renderPlaylist() {
-  const pl = library[openPlaylistId];
-  const root = $("view-playlist");
-  if (!pl) { root.innerHTML = '<p class="muted">Esta playlist ya no existe.</p>'; return; }
-  const tracks = pl.tracks || [];
-  root.innerHTML = `
-    <div class="pl-header">
-      ${thumb(pl.artworkUrl || artFor(tracks[0]))}
-      <div><div class="pl-kind">Playlist</div><h1>${esc(pl.title)}</h1><div class="muted">${songs(tracks.length)}</div></div>
-    </div>
-    <div class="pl-actions">
-      <button class="big-play" id="pl-play" aria-label="Reproducir"><svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg></button>
-      <button class="btn-icon" id="pl-shuffle" aria-label="Reproducir en aleatorio"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h4v4"/><path d="M4 20 20 4"/><path d="M20 16v4h-4"/><path d="m15 15 5 5"/><path d="M4 4l5 5"/></svg></button>
-    </div>
-    ${trackRows(tracks)}`;
-  $("pl-play").addEventListener("click", () => playTracks(tracks, 0));
-  $("pl-shuffle").addEventListener("click", () => { const s = shuffled(tracks); playTracks(s, 0); });
-  bindTrackRows(root, tracks);
-}
-
-function renderSearch() {
-  const root = $("search-results");
-  const s = lastSearch;
-  if (!s.query) {
-    root.innerHTML = `<p class="muted" style="margin-top:20px">${youtubeApiKey
-      ? "Busca en tu biblioteca y en YouTube."
-      : "Busca en tu biblioteca. Para buscar cualquier canción, añade una clave de YouTube en config.js (ver docs/WEB_SYNC.md)."}</p>`;
-    return;
-  }
-  root.innerHTML = `
-    ${s.local.length ? `<h2>En tu biblioteca</h2><div id="sr-local">${trackRows(s.local, { numbered: false })}</div>` : ""}
-    ${youtubeApiKey ? `<h2>YouTube</h2>${s.loading ? '<p class="muted">Buscando…</p>' : s.error ? `<p class="error">${esc(s.error)}</p>` : `<div id="sr-remote">${trackRows(s.remote, { numbered: false })}</div>`}` : ""}
-    ${!s.local.length && !youtubeApiKey ? '<p class="muted">Nada en tu biblioteca con ese nombre.</p>' : ""}`;
-  if ($("sr-local")) bindTrackRows($("sr-local"), s.local, { single: true });
-  if ($("sr-remote")) bindTrackRows($("sr-remote"), s.remote, { single: true });
-}
-
-function markPlayingRows() {
-  const id = currentTrack()?.videoId;
-  document.querySelectorAll(".track").forEach((row) => row.classList.toggle("playing", !!id && row.dataset.video === id));
-}
-
-let toastTimer;
-function toast(text) {
-  $("toast").textContent = text;
-  $("toast").hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { $("toast").hidden = true; }, 2600);
-}
-
-// Barra de progreso fluida + posición publicada cada pocos segundos.
-setInterval(() => {
-  const duration = currentDuration();
-  const position = Math.min(currentPosition(), duration || Infinity);
-  const pct = duration ? (position / duration) * 100 : 0;
-  $("bar-fill").style.width = `${pct}%`;
-  $("bar-knob").style.left = `${pct}%`;
-  $("t-pos").textContent = fmt(position);
-  $("t-dur").textContent = fmt(duration);
-  if (isActiveHere() && isPlayingNow() && Date.now() - lastPositionPublish > POSITION_PUBLISH_MS) publish();
-}, 500);
-
-// Si el dispositivo activo deja de dar señales, actualizar la vista (deja de "sonar").
-setInterval(() => {
-  if (playback?.activeDevice && !isActiveHere()) render();
-  if (jam?.open) onJamChanged(); // invitados conectados + peticiones pendientes si cambia quién reproduce
-}, 10_000);
+if (!S.configured) $("setup").hidden = false;
+else { core.loadYouTubeApi(); core.boot(); }

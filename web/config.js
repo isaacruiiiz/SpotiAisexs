@@ -11,3 +11,8 @@ export const firebaseConfig = {
 };
 
 export const youtubeApiKey = "AIzaSyAjR4eqrgt9ZN0eya9tFCDXd9mPH1i3x9A";
+
+// Catálogo completo (buscar sin límite, artistas, álbumes, "Esto es", radio):
+// dirección de tu Worker de Cloudflare, sin barra final. Ver docs/WEB_SYNC.md.
+// Ejemplo: "https://spotiaisexs-catalogo.TU-USUARIO.workers.dev"
+export const catalogUrl = "";

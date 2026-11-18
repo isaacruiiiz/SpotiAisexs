@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -335,8 +336,24 @@ fun PlayerQuickActions(
     onQueue: () -> Unit,
     jamLive: Boolean,
     modifier: Modifier = Modifier,
+    onDevices: (() -> Unit)? = null,
 ) {
     Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (onDevices != null) {
+            // "¿Dónde suena?": pass the music to the browser or bring it back.
+            androidx.compose.material3.Surface(
+                onClick = onDevices,
+                shape = DialCorner,
+                color = androidx.compose.ui.graphics.Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.size(44.dp),
+            ) {
+                androidx.compose.foundation.layout.Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
+                    Icon(Icons.Filled.Devices, contentDescription = "Dispositivos", modifier = Modifier.size(20.dp))
+                }
+            }
+        }
         DialOutlinedButton(
             text = if (jamLive) "Jam en directo" else "Jam",
             onClick = onJam,

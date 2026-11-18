@@ -9,126 +9,112 @@
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- Fondo: la portada que suena, difuminada; su color tiñe toda la interfaz. -->
-  <div class="backdrop" aria-hidden="true"><img id="backdrop-img" alt=""></div>
-
   <section id="login" class="center-screen" hidden>
-    <form id="login-form" class="login-card glass">
-      <img src="logo.svg" alt="" width="64" height="64" class="login-logo">
-      <h1>SpotiAisexs</h1>
-      <p class="muted">Entra con la cuenta de tu proyecto de Firebase.</p>
-      <label>Correo<input id="login-email" type="email" autocomplete="username" required></label>
-      <label>Contraseña<input id="login-password" type="password" autocomplete="current-password" required></label>
-      <button type="submit" class="btn-accent">Entrar</button>
+    <form id="login-form" class="login-card">
+      <img src="logo.svg" alt="" width="56" height="56">
+      <h1 class="serif">SpotiAisexs</h1>
+      <p class="muted">Entra con la cuenta de tu proyecto de Firebase, la misma que usas en el teléfono.</p>
+      <label>Correo<input id="login-email" class="field" type="email" autocomplete="username" required></label>
+      <label>Contraseña<input id="login-password" class="field" type="password" autocomplete="current-password" required></label>
+      <button type="submit" class="btn-fill">Entrar</button>
       <p id="login-error" class="error" role="alert"></p>
     </form>
   </section>
 
   <section id="setup" class="center-screen" hidden>
-    <div class="login-card glass">
-      <img src="logo.svg" alt="" width="64" height="64" class="login-logo">
-      <h1>Falta configurar Firebase</h1>
+    <div class="login-card">
+      <img src="logo.svg" alt="" width="56" height="56">
+      <h1 class="serif">Falta configurar Firebase</h1>
       <p class="muted">Edita <code>web/config.js</code> con los datos de tu proyecto y vuelve a subirlo. Los pasos están en <code>docs/WEB_SYNC.md</code>.</p>
     </div>
   </section>
 
   <div id="app" class="shell" hidden>
-    <div id="mobile-top" class="mobile-top"></div>
-    <!-- Barra lateral: navegación + biblioteca (en el móvil, barra inferior) -->
-    <aside class="sidebar glass">
-      <div class="brand"><img src="logo.svg" alt="" width="30" height="30"><span>SpotiAisexs</span></div>
+    <aside class="sidebar">
+      <a class="brand" href="#/"><img src="logo.svg" alt="" width="28" height="28"><span>SpotiAisexs</span></a>
       <nav class="nav" aria-label="Secciones">
-        <button class="nav-item" data-view="home"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 4l8 6.5V20h-5.5v-5.5h-5V20H4z"/></svg><span>Inicio</span></button>
-        <button class="nav-item nav-library" data-view="library"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4v16"/><path d="M10 4v16"/><path d="m15 4.5 4.5 15"/></svg><span>Biblioteca</span></button>
-        <button class="nav-item nav-search" data-view="search"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg><span>Buscar</span></button>
+        <a class="nav-item" data-nav="home" href="#/"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="2.5"/><path d="M7 7a7 7 0 0 0 0 10"/><path d="M17 7a7 7 0 0 1 0 10"/></svg><span>Radio</span></a>
+        <a class="nav-item" data-nav="search" href="#/buscar"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg><span>Buscar</span></a>
+        <a class="nav-item" data-nav="library" href="#/biblioteca"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4v16"/><path d="M10 4v16"/><path d="m15 4.5 4.5 15"/></svg><span>Biblioteca</span></a>
       </nav>
-      <div class="library">
-        <div class="library-head"><h2>Tu biblioteca</h2><button id="new-playlist" class="btn-icon sm" aria-label="Crear playlist" title="Crear playlist"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button></div>
-        <ul id="library-list" class="library-list"></ul>
+      <div class="side-library">
+        <div class="side-head"><h2>Tu biblioteca</h2><button id="new-playlist" class="icon-btn" aria-label="Crear playlist"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button></div>
+        <ul id="side-list" class="side-list"></ul>
       </div>
-      <button id="logout" class="btn-ghost logout">Salir</button>
+      <button id="logout" class="btn-text">Salir</button>
     </aside>
 
-    <!-- Contenido principal (vistas) -->
-    <main id="main" class="main">
-      <section id="view-home" class="view"></section>
-      <section id="view-search" class="view" hidden>
-        <form id="search-form" class="search-box glass" role="search">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
-          <input id="search-input" type="search" placeholder="¿Qué quieres escuchar?" autocomplete="off" aria-label="Buscar">
-        </form>
-        <div id="search-results"></div>
-      </section>
-      <section id="view-library" class="view" hidden></section>
-      <section id="view-playlist" class="view" hidden></section>
-    </main>
+    <main id="main" class="main" tabindex="-1"></main>
 
-    <!-- Panel "Reproduciendo": vídeo de YouTube (visible mientras suena aquí) + cola -->
-    <aside id="nowpanel" class="nowpanel glass">
-      <div class="np-media">
-        <img id="np-cover" class="np-cover" alt="" hidden>
-        <div id="np-empty" class="np-cover np-empty"><svg viewBox="0 0 100 100" width="80" height="80" aria-hidden="true"><rect x="21.5" y="37" width="9" height="26" rx="4.5"/><rect x="33.5" y="28" width="9" height="44" rx="4.5"/><rect x="45.5" y="20" width="9" height="60" rx="4.5"/><rect x="57.5" y="30" width="9" height="40" rx="4.5"/><rect x="69.5" y="39" width="9" height="22" rx="4.5"/></svg></div>
-        <div id="yt-holder" class="np-cover yt-holder" hidden><div id="yt-player"></div></div>
+    <!-- Lo que suena: el vídeo de YouTube (tiene que verse mientras suena aquí) y lo que viene -->
+    <aside id="now" class="now" aria-label="Lo que suena">
+      <button id="now-close" class="icon-btn now-close" aria-label="Cerrar"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+      <div class="now-media">
+        <img id="now-cover" class="now-cover" alt="" hidden>
+        <div id="now-empty" class="now-cover now-empty" aria-hidden="true"></div>
+        <div id="yt-holder" class="now-cover yt-holder" hidden><div id="yt-player"></div></div>
+        <button id="tap-to-play" class="tap-to-play" hidden>Toca para que suene aquí</button>
       </div>
-      <div class="np-head">
-        <div class="np-text"><h2 id="np-title">Nada sonando</h2><p id="np-artist" class="muted">Busca algo o abre una playlist</p></div>
-        <button id="np-like" class="btn-icon like" aria-label="Me gusta" aria-pressed="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2z"/></svg></button>
+      <div class="now-title">
+        <div class="now-text"><h2 id="now-name" class="serif">Nada sonando</h2><p id="now-artist" class="muted">Busca algo o pon una emisora</p></div>
+        <button id="now-like" class="icon-btn like" aria-label="Me gusta" aria-pressed="false"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2z"/></svg></button>
       </div>
-      <div class="np-queue-head"><h3>A continuación</h3><span id="radio-label" class="radio-label" hidden></span></div>
-      <ol id="queue-list" class="queue-list"></ol>
+      <div id="dial-box" class="dial-box" hidden>
+        <div class="dial-head"><span id="dial-station" class="cond">Radio</span><span id="dial-zone" class="dial-zone">Cerca</span></div>
+        <input id="dial" class="dial" type="range" min="0" max="100" step="1" aria-label="¿Cuánto me alejo de lo que suena?">
+        <div class="dial-ends"><span>Pegada</span><span>Todo nuevo</span></div>
+      </div>
+      <h3 class="cond now-next">Lo que viene</h3>
+      <ol id="queue-list" class="rows queue"></ol>
       <p id="queue-empty" class="muted small">La cola aparecerá aquí.</p>
     </aside>
 
-    <!-- Barra de reproducción -->
-    <footer class="playerbar glass">
-      <div class="pb-track">
-        <img id="pb-cover" class="pb-cover" alt="" hidden>
-        <div class="pb-cover pb-cover-empty" id="pb-cover-empty"></div>
-        <div class="pb-text"><div id="pb-title" class="pb-title">—</div><div id="pb-artist" class="pb-artist"></div></div>
-        <button id="pb-like" class="btn-icon sm like" aria-label="Me gusta" aria-pressed="false"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2z"/></svg></button>
-      </div>
-      <div class="pb-center">
+    <footer class="bar">
+      <button id="bar-track" class="bar-track" aria-label="Abrir lo que suena">
+        <img id="bar-cover" class="bar-cover" alt="" hidden>
+        <div id="bar-cover-empty" class="bar-cover now-empty" aria-hidden="true"></div>
+        <span class="bar-text"><span id="bar-title" class="bar-title">Nada sonando</span><span id="bar-artist" class="bar-artist"></span></span>
+      </button>
+      <div class="bar-center">
         <div class="controls">
-          <button id="shuffle" class="btn-icon sm" aria-label="Aleatorio" aria-pressed="false"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h4v4"/><path d="M4 20 20 4"/><path d="M20 16v4h-4"/><path d="m15 15 5 5"/><path d="M4 4l5 5"/></svg></button>
-          <button id="prev" class="btn-icon" aria-label="Anterior"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M18.5 5.5v13l-9.5-6.5z"/><rect x="5" y="5.5" width="2.4" height="13" rx="1"/></svg></button>
-          <button id="play" class="btn-play" aria-label="Reproducir"><svg id="ic-play" viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5.2v13.6l11-6.8z"/></svg><svg id="ic-pause" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" hidden><rect x="6.2" y="5" width="3.8" height="14" rx="1"/><rect x="14" y="5" width="3.8" height="14" rx="1"/></svg></button>
-          <button id="next" class="btn-icon" aria-label="Siguiente"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M5.5 5.5v13l9.5-6.5z"/><rect x="16.6" y="5.5" width="2.4" height="13" rx="1"/></svg></button>
-          <button id="queue-toggle" class="btn-icon sm" aria-label="Mostrar u ocultar la cola"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h12"/><path d="M4 12h12"/><path d="M4 18h8"/><path d="m17 15 4 3-4 3z" fill="currentColor"/></svg></button>
+          <button id="shuffle" class="icon-btn" aria-label="Aleatorio" aria-pressed="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22"/><path d="m18 2 4 4-4 4"/><path d="M2 6h1.9c1.5 0 2.9.9 3.6 2.2"/><path d="M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8"/><path d="m18 14 4 4-4 4"/></svg></button>
+          <button id="prev" class="icon-btn" aria-label="Anterior"><svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M18.5 5.5v13l-9.5-6.5z"/><rect x="5" y="5.5" width="2.4" height="13" rx="1"/></svg></button>
+          <button id="play" class="play-btn" aria-label="Reproducir"><svg id="ic-play" viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M7.5 4.5v15l12-7.5z"/></svg><svg id="ic-pause" viewBox="0 0 24 24" width="24" height="24" fill="currentColor" hidden><rect x="6.2" y="5" width="3.8" height="14" rx="1"/><rect x="14" y="5" width="3.8" height="14" rx="1"/></svg></button>
+          <button id="next" class="icon-btn" aria-label="Siguiente"><svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M5.5 5.5v13l9.5-6.5z"/><rect x="16.6" y="5.5" width="2.4" height="13" rx="1"/></svg></button>
+          <button id="bar-like" class="icon-btn like" aria-label="Me gusta" aria-pressed="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2z"/></svg></button>
         </div>
-        <div class="progress">
-          <span id="t-pos" class="time">0:00</span>
-          <div id="bar" class="bar" role="slider" aria-label="Posición" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0"><div id="bar-fill" class="bar-fill"></div><div id="bar-knob" class="bar-knob"></div></div>
-          <span id="t-dur" class="time">0:00</span>
+        <!-- Barra "Cinta": lo ya sonado se rellena y lleva el tiempo dentro -->
+        <div id="ribbon" class="ribbon" role="slider" tabindex="0" aria-label="Posición en la canción" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="ribbon-fill" class="ribbon-fill"><span id="t-pos" class="ribbon-time">0:00</span></div>
+          <span id="t-left" class="ribbon-left">-0:00</span>
         </div>
       </div>
-      <div class="pb-right">
-        <div class="jam">
-          <button id="jam-btn" class="chip jam-btn" aria-label="Jam: escuchar con amigos">
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/></svg>
-            <span>Jam</span>
-          </button>
-          <div id="jam-panel" class="popover jam-panel" hidden></div>
+      <div class="bar-right">
+        <div class="pop-anchor">
+          <button id="jam-btn" class="chip" aria-label="Jam: escuchar con amigos"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/></svg><span>Jam</span></button>
+          <div id="jam-panel" class="popover" hidden></div>
         </div>
-        <div class="devices">
-          <button id="device-btn" class="chip" aria-label="Dispositivos">
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/></svg>
-            <span id="device-label">Este navegador</span>
-          </button>
+        <div class="pop-anchor">
+          <button id="device-btn" class="chip" aria-label="Dispositivos"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/></svg><span id="device-label">Este navegador</span></button>
           <div id="device-menu" class="popover" hidden></div>
         </div>
         <input id="volume" class="volume" type="range" min="0" max="100" value="80" aria-label="Volumen">
       </div>
     </footer>
+
+    <nav class="tabs" aria-label="Secciones">
+      <a class="tab" data-nav="home" href="#/"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="2.5"/><path d="M7 7a7 7 0 0 0 0 10"/><path d="M17 7a7 7 0 0 1 0 10"/></svg><span>Radio</span></a>
+      <a class="tab" data-nav="search" href="#/buscar"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg><span>Buscar</span></a>
+      <a class="tab" data-nav="library" href="#/biblioteca"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4v16"/><path d="M10 4v16"/><path d="m15 4.5 4.5 15"/></svg><span>Biblioteca</span></a>
+    </nav>
   </div>
 
-  <!-- Menú de una canción (⋯ o clic derecho) -->
   <div id="menu" class="popover track-menu" role="menu" hidden></div>
   <div id="menu-scrim" class="menu-scrim" hidden></div>
-
   <div id="toast" class="toast" role="status" hidden></div>
   <script src="qrcode.js" defer></script>
   <script type="module" src="app.js"></script>

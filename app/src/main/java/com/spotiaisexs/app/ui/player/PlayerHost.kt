@@ -1673,6 +1673,10 @@ private fun FullPlayer(
     val radioTuning by player.radioTuning.collectAsStateWithLifecycle()
     val jamViewModel: com.spotiaisexs.app.ui.connect.ConnectViewModel = hiltViewModel()
     val jamState by jamViewModel.jam.collectAsStateWithLifecycle()
+    var showDevicesSheet by remember { mutableStateOf(false) }
+    if (showDevicesSheet) {
+        com.spotiaisexs.app.ui.connect.ConnectDevicesSheet(onDismiss = { showDevicesSheet = false })
+    }
     var showJamSheet by remember { mutableStateOf(false) }
     if (showJamSheet) {
         com.spotiaisexs.app.ui.connect.JamQuickSheet(onDismiss = { showJamSheet = false })
@@ -2724,6 +2728,7 @@ private fun FullPlayer(
                                         onLyrics = { onTabChange(FullPlayerTab.LYRICS) },
                                         onQueue = { onTabChange(FullPlayerTab.QUEUE) },
                                         jamLive = jamState?.open == true,
+                                        onDevices = { showDevicesSheet = true },
                                     )
                                 }
                         }

@@ -96,6 +96,11 @@ data class ConnectPlayback(
     /** Upcoming songs starting with the current one (queueIndex points at it). */
     val queue: List<ConnectTrack> = emptyList(),
     val queueIndex: Int = 0,
+    /** Device that wrote the status last. The active device restores its state if someone else's late write lands on top. */
+    val writer: String? = null,
+    /** While a radio plays: the dial (0–100) and the station's name, so remotes can show and move it. */
+    val radioDistance: Int? = null,
+    val radioLabel: String? = null,
 ) {
     fun estimatedPositionMs(now: Long = System.currentTimeMillis()): Long {
         val elapsed = if (isPlaying && updatedAt > 0) (now - updatedAt).coerceAtLeast(0) else 0
@@ -114,7 +119,14 @@ data class ConnectCommand(
     val at: Long? = null,
     /** For "playTracks": songs the web can't play (YouTube blocks embedding) and hands to the phone. */
     val tracks: List<ConnectTrack>? = null,
+    /** For "dial": the new distance. */
+    val value: Int? = null,
+    /** For "station": the RadioStation to start. */
+    val name: String? = null,
 )
+
+/** Another device of the account that is online right now (a browser tab, another phone). */
+data class ConnectDevice(val id: String, val name: String, val type: String)
 
 /** users/{uid}/jam — a shared session where friends add songs from a link (web/jam.html). */
 @Serializable
@@ -181,10 +193,15 @@ class ConnectSync @Inject constructor(
     private val applicationScope: CoroutineScope,
 ) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
-    private val http = okHttpClient.newBuilder().cache(null).build()
+    private val http = okHttpClient.newBuilder().cache(null).callTimeout(20, TimeUnit.SECONDS).build()
+    // The streams get their own connections with HTTP/2 pings: when the phone
+    // changes network (Wi-Fi to mobile data) the old connection dies silently
+    // and, without pings, orders from the web were lost for up to 90 seconds.
     private val streamHttp = okHttpClient.newBuilder()
         .cache(null)
-        .readTimeout(90, TimeUnit.SECONDS) // Firebase sends keep-alives every ~30 s
+        .connectionPool(okhttp3.ConnectionPool(2, 2, TimeUnit.MINUTES))
+        .pingInterval(15, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS) // Firebase sends keep-alives every ~30 s
         .build()
     private val jsonType = "application/json; charset=utf-8".toMediaType()
 
@@ -194,6 +211,11 @@ class ConnectSync @Inject constructor(
     /** The playback of another device while it is the active one; null when this phone plays. */
     private val _remotePlayback = MutableStateFlow<ConnectPlayback?>(null)
     val remotePlayback: StateFlow<ConnectPlayback?> = _remotePlayback.asStateFlow()
+
+    private val _devices = MutableStateFlow<List<ConnectDevice>>(emptyList())
+    /** The account's other devices that are online, to pass the music to. */
+    val devices: StateFlow<List<ConnectDevice>> = _devices.asStateFlow()
+    private val handledCommands = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
 
     private val authMutex = Mutex()
     private var session: Job? = null
@@ -295,6 +317,27 @@ class ConnectSync @Inject constructor(
         }
     }
 
+    /**
+     * Passes what is playing to another device ("escuchar en el navegador").
+     * The exact position is published first, then the order: the other device
+     * picks the song up at that second, claims playback, and this phone stops.
+     */
+    fun transferTo(targetId: String) {
+        val me = config?.deviceId ?: return
+        if (targetId == me) return playHere()
+        applicationScope.launch(Dispatchers.IO) {
+            runCatching {
+                if (isActiveHere) publishState(player.state.value)
+                val body = buildJsonObject {
+                    put("type", "transfer")
+                    put("from", me)
+                    put("at", serverTimestamp())
+                }
+                rest("POST", "commands/$targetId", body.toString())
+            }.onFailure { Log.w(TAG, "Transfer failed", it) }
+        }
+    }
+
     /** "Reproducir aquí": moves playback from the remote device to this phone. */
     fun playHere() {
         val remote = lastPlayback ?: return
@@ -321,6 +364,8 @@ class ConnectSync @Inject constructor(
             launch { publishLoop() }
             launch { observePlayer() }
             launch { libraryLoop() }
+            launch { commandPollLoop() }
+            launch { streamLoop("devices") { _, _ -> refreshDevices() } }
             launch { streamLoop("libraryInbox") { _, _ -> drainLibraryInbox() } }
             launch { streamLoop("jam") { _, _ -> refreshJam() } }
             launch {
@@ -342,6 +387,8 @@ class ConnectSync @Inject constructor(
                 }
                 rest("PUT", "devices/${stored.deviceId}", body.toString())
             }.onFailure { Log.w(TAG, "Heartbeat failed", it) }
+            // Also drops from the list the devices that went away without saying so.
+            runCatching { refreshDevices() }
             delay(HEARTBEAT_MS)
         }
     }
@@ -362,7 +409,8 @@ class ConnectSync @Inject constructor(
             if (startedHere && !isActiveHere) claimPending = true
             if (!isActiveHere && !claimPending) return@collect
 
-            val signature = "${st.current.title}|${st.current.artist}|${st.isPlaying}|${st.currentIndex}|${st.queue.size}"
+            val signature = "${st.current.title}|${st.current.artist}|${st.isPlaying}|${st.currentIndex}|${st.queue.size}|" +
+                "${st.isEndlessQueue}|${player.radioTuning.value.distance}"
             val expected = lastPublishedPosition + if (st.isPlaying) now - lastPublishedAt else 0
             val seeked = abs(st.positionMs - expected) > SEEK_DETECT_MS
             val stale = st.isPlaying && now - lastPublishedAt > POSITION_REFRESH_MS
@@ -376,38 +424,56 @@ class ConnectSync @Inject constructor(
     }
 
     private suspend fun publishLoop() {
-        publishRequests.collect { st ->
-            val stored = config ?: return@collect
-            val current = st.current ?: return@collect
-            val offset = st.currentIndex.coerceAtLeast(0)
-            val upcoming = if (st.queue.isNotEmpty() && offset < st.queue.size) {
-                st.queue.subList(offset, minOf(st.queue.size, offset + QUEUE_PUBLISH_LIMIT))
-            } else {
-                listOf(current)
-            }
-            val playback = ConnectPlayback(
-                activeDevice = stored.deviceId,
-                activeDeviceName = deviceName(),
-                activeDeviceType = "phone",
-                track = current.toConnect(st.durationMs).withJamAuthor(),
-                isPlaying = st.isPlaying,
-                positionMs = st.positionMs,
-                durationMs = st.durationMs,
-                queue = upcoming.map { it.toConnect().withJamAuthor() },
-                queueIndex = 0,
-            )
-            val body = json.encodeToJsonElement(playback).jsonObject.let { obj ->
-                JsonObject(obj + ("updatedAt" to serverTimestamp()))
-            }
-            runCatching { rest("PUT", "playback", body.toString()) }
-                .onSuccess {
-                    publishedQueueOffset = offset
-                    claimPending = false
-                    lastPlayback = playback.copy(updatedAt = System.currentTimeMillis())
-                    _remotePlayback.value = null
-                }
-                .onFailure { Log.w(TAG, "Publish failed", it) }
+        publishRequests.collect { st -> publishState(st) }
+    }
+
+    /**
+     * Writes this phone's state. Taking playback (the first write, or pressing
+     * play while another device has it) is a full write that names this phone
+     * as the active device. Every later write only updates the status fields
+     * and never touches `activeDevice`: a status write that was already on its
+     * way when another device claimed playback can no longer steal it back
+     * (that was why passing the music sometimes bounced or stopped).
+     */
+    private suspend fun publishState(st: MusicPlayerState) {
+        val stored = config ?: return
+        val current = st.current ?: return
+        val offset = st.currentIndex.coerceAtLeast(0)
+        val upcoming = if (st.queue.isNotEmpty() && offset < st.queue.size) {
+            st.queue.subList(offset, minOf(st.queue.size, offset + QUEUE_PUBLISH_LIMIT))
+        } else {
+            listOf(current)
         }
+        val tuning = player.radioTuning.value
+        val playback = ConnectPlayback(
+            activeDevice = stored.deviceId,
+            activeDeviceName = deviceName(),
+            activeDeviceType = "phone",
+            track = current.toConnect(st.durationMs).withJamAuthor(),
+            isPlaying = st.isPlaying,
+            positionMs = st.positionMs,
+            durationMs = st.durationMs,
+            queue = upcoming.map { it.toConnect().withJamAuthor() },
+            queueIndex = 0,
+            writer = stored.deviceId,
+            radioDistance = tuning.distance.takeIf { st.isEndlessQueue },
+            radioLabel = (tuning.station?.title ?: "Radio").takeIf { st.isEndlessQueue },
+        )
+        val claim = claimPending || lastPlayback?.activeDevice != stored.deviceId
+        val fields = json.encodeToJsonElement(playback).jsonObject.toMutableMap()
+        fields["updatedAt"] = serverTimestamp()
+        // Sent as explicit nulls so the dial disappears from the remotes when the radio ends.
+        if (playback.radioDistance == null) fields["radioDistance"] = JsonNull
+        if (playback.radioLabel == null) fields["radioLabel"] = JsonNull
+        if (!claim) OWNER_FIELDS.forEach { fields.remove(it) }
+        runCatching { rest(if (claim) "PUT" else "PATCH", "playback", JsonObject(fields).toString()) }
+            .onSuccess {
+                publishedQueueOffset = offset
+                claimPending = false
+                lastPlayback = playback.copy(updatedAt = System.currentTimeMillis())
+                _remotePlayback.value = null
+            }
+            .onFailure { Log.w(TAG, "Publish failed", it) }
     }
 
     // ── Incoming ───────────────────────────────────────────────────────────
@@ -428,6 +494,10 @@ class ConnectSync @Inject constructor(
         }.getOrNull()
         lastPlayback = playback
         val me = config?.deviceId
+        if (playback != null && me != null && playback.activeDevice == me && playback.writer != null && playback.writer != me) {
+            // A late status write from the device that played before landed on ours: put ours back.
+            publishRequests.tryEmit(player.state.value)
+        }
         val remoteActive = playback?.activeDevice != null && playback.activeDevice != me && !claimPending
         if (remoteActive && isDeviceOnline(playback!!.activeDevice!!)) {
             // Another device took over: stop here and become a remote.
@@ -447,6 +517,43 @@ class ConnectSync @Inject constructor(
         return serverNow() - lastSeen < ONLINE_WINDOW_MS
     }
 
+    private suspend fun refreshDevices() {
+        val me = config?.deviceId
+        val raw = runCatching { rest("GET", "devices", null) }.getOrNull() ?: return
+        val entries = runCatching { json.parseToJsonElement(raw) as? JsonObject }.getOrNull().orEmpty()
+        val now = serverNow()
+        _devices.value = entries.mapNotNull { (id, element) ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            val lastSeen = (obj["lastSeen"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.toLong() ?: 0L
+            if (id == me || now - lastSeen > ONLINE_WINDOW_MS) return@mapNotNull null
+            ConnectDevice(
+                id = id,
+                name = (obj["name"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: "Dispositivo",
+                type = (obj["type"] as? JsonPrimitive)?.contentOrNull ?: "web",
+            )
+        }.sortedBy { it.name }
+    }
+
+    /**
+     * Safety net for the orders: while this phone is the one playing, the
+     * pending orders are also read directly every few seconds. If the live
+     * stream is stuck (network change, a sleepy connection), pause, next and
+     * the rest still arrive in a moment instead of never.
+     */
+    private suspend fun commandPollLoop() {
+        while (currentScopeActive()) {
+            val me = config?.deviceId
+            val playing = player.state.value.isPlaying
+            val activeHere = me != null && lastPlayback?.activeDevice == me
+            if (activeHere) {
+                runCatching { rest("GET", "commands/$me", null) }.getOrNull()?.let { raw ->
+                    runCatching { json.parseToJsonElement(raw) }.getOrNull()?.let { onCommandEvent("/", it) }
+                }
+            }
+            delay(if (playing && activeHere) COMMAND_POLL_PLAYING_MS else COMMAND_POLL_IDLE_MS)
+        }
+    }
+
     private suspend fun onCommandEvent(path: String, data: JsonElement?) {
         if (data == null || data is JsonNull) return
         val commands: Map<String, JsonElement> = if (path == "/") {
@@ -454,14 +561,24 @@ class ConnectSync @Inject constructor(
         } else {
             mapOf(path.trim('/') to data)
         }
+        var executed = false
         for ((id, element) in commands) {
+            // The stream and the safety-net poll can both deliver the same order: run it once.
+            if (!handledCommands.add(id)) continue
+            if (handledCommands.size > 200) synchronized(handledCommands) { handledCommands.iterator().let { it.next(); it.remove() } }
             val command = runCatching { json.decodeFromJsonElement<ConnectCommand>(element) }.getOrNull()
             runCatching { rest("DELETE", "commands/${config?.deviceId}/$id", null) }
             if (command == null) continue
             val age = command.at?.let { serverNow() - it } ?: 0
             if (age > COMMAND_MAX_AGE_MS) continue
-            // "playTracks" is the only order that may arrive while this phone is not the active device.
+            // "playTracks" and "transfer" are the orders that may arrive while this phone is not the active device.
             withContext(Dispatchers.Main) { execute(command) }
+            executed = true
+        }
+        if (executed) {
+            // Answer at once, even when nothing visible changed: the web waits for it to know the order arrived.
+            delay(350)
+            if (isActiveHere || claimPending) publishRequests.tryEmit(player.state.value)
         }
     }
 
@@ -483,6 +600,12 @@ class ConnectSync @Inject constructor(
                 claimPending = true
                 _remotePlayback.value = null
                 player.play(seed.toPlayable(), sourceLabel = "SpotiAisexs Web", startRadio = true)
+            }
+            "dial" -> command.value?.let { player.setRadioDistance(it.coerceIn(0, 100)) }
+            "station" -> com.spotiaisexs.app.playback.RadioStation.entries.firstOrNull { it.name == command.name }?.let { station ->
+                claimPending = true
+                _remotePlayback.value = null
+                player.playStation(station)
             }
             "playTracks" -> command.tracks?.takeIf { it.isNotEmpty() }?.let { list ->
                 claimPending = true
@@ -824,6 +947,10 @@ class ConnectSync @Inject constructor(
                 val title = op.title?.trim()?.takeIf { it.isNotBlank() } ?: return
                 val playlist = playlistRepository.createCustom(title.take(100))
                 track?.let { playlistRepository.addTrack(playlist.id, it) }
+                // Saving an album or an "Esto es" from the web sends all its songs at once.
+                op.tracks.orEmpty()
+                    .filter { !it.videoId.isNullOrBlank() && it.title.isNotBlank() }
+                    .forEach { playlistRepository.addTrack(playlist.id, it.toGenerated()) }
             }
         }
     }
@@ -840,6 +967,7 @@ class ConnectSync @Inject constructor(
     private data class LibraryOp(
         val op: String = "",
         val track: ConnectTrack? = null,
+        val tracks: List<ConnectTrack>? = null,
         val playlistId: String? = null,
         val title: String? = null,
         val at: Long? = null,
@@ -1067,6 +1195,9 @@ class ConnectSync @Inject constructor(
         const val SEEK_DETECT_MS = 3_000L
         const val QUEUE_PUBLISH_LIMIT = 50
         const val COMMAND_MAX_AGE_MS = 30_000L
+        const val COMMAND_POLL_PLAYING_MS = 4_000L
+        const val COMMAND_POLL_IDLE_MS = 12_000L
+        val OWNER_FIELDS = listOf("activeDevice", "activeDeviceName", "activeDeviceType")
         const val TAKEOVER_SEEK_TIMEOUT_MS = 20_000L
         const val ONLINE_WINDOW_MS = 75_000L
         const val LIBRARY_DEBOUNCE_MS = 5_000L

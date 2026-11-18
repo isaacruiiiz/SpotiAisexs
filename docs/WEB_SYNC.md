@@ -56,43 +56,75 @@ En la app: **Ajustes → Importar → Conectar con la web**.
 
 El teléfono solo guarda un token de sesión, nunca la contraseña.
 
+## Catálogo completo en la web
+
+Para que la web tenga lo mismo que la app sin depender del teléfono (buscar sin
+límite, páginas de artista y de álbum, "Esto es", emisoras) necesita un pequeño
+puente: un navegador no puede hablar directamente con YouTube Music. El puente
+es un Worker gratuito de Cloudflare (100 000 consultas al día).
+
+1. Entra en <https://dash.cloudflare.com> → **Workers y Pages → Crear → Worker**.
+   Ponle un nombre (por ejemplo `spotiaisexs-catalogo`) y pulsa **Implementar**.
+2. Pulsa **Editar código**, borra lo que haya, pega el contenido de
+   `web/worker/catalog-worker.js` y pulsa **Implementar**.
+3. Copia la dirección del Worker (termina en `.workers.dev`) y ponla en
+   `web/config.js`:
+
+   ```js
+   export const catalogUrl = "https://spotiaisexs-catalogo.TU-USUARIO.workers.dev";
+   ```
+
+4. Sube el cambio. Al abrir la web desaparece el aviso "Falta el catálogo
+   completo" y aparecen "Esto es" y "Artistas para ti".
+
+El Worker solo acepta consultas desde `https://isaacruiiiz.github.io`; si
+publicas la web en otra dirección, añádela a `ALLOWED_ORIGINS` en el archivo.
+No guarda nada ni usa tu cuenta. Sin él la web sigue funcionando con tu
+biblioteca y con la clave de YouTube de más abajo.
+
 ## Cómo se usa
 
 La web funciona **sola**, sin el teléfono:
 
-- **Biblioteca:** cuando el teléfono está enlazado, sube tus playlists (Me gusta
-  incluida) a Firebase. Quedan guardadas, así que la web las muestra y las
-  reproduce aunque el teléfono esté apagado.
-- **Me gusta y playlists desde la web:** corazón en la barra y en cada canción;
-  menú **⋯** (o clic derecho) → *Añadir a la cola*, *Iniciar radio*,
-  *Añadir a Me gusta*, *Añadir a una playlist* o crear una nueva. Se ven al
-  momento y el teléfono los aplica a su biblioteca cuando se conecta.
-- **Radio como en el teléfono:** al poner una canción suelta (buscada) la cola
-  sigue con canciones de su entorno; **Radio infinita** (en Inicio) mezcla
-  según tus gustos. Usa la "Mix" de YouTube de cada canción y la clave de
-  YouTube (1 unidad de cuota por cada 50 canciones, casi nada). Al acabarse
-  una playlist sigue con radio de su última canción.
+- **Radio (inicio):** "Tu mezcla" con el dial (de pegada a lo que conoces a
+  todo nuevo), las emisoras Descubrir, Redescubrir y Me gusta, lo último que
+  sonó, tus playlists, "Esto es" de tus artistas y artistas para ti.
+- **Buscar:** canciones, artistas y álbumes. Una canción buscada arranca su
+  radio; un álbum o una playlist suenan tal cual y al acabar siguen con radio.
+- **Artista, álbum y "Esto es":** con la portada grande, como en la app.
+  "Guardar" los añade a tu biblioteca.
+- **Biblioteca:** tus playlists y Me gusta. Lo que cambies en la web se ve al
+  momento y el teléfono lo aplica a su biblioteca cuando se conecta; lo que
+  cambies en el teléfono llega a la web igual.
+- **Lo que viene:** la cola, con el dial cuando suena una radio.
 - Atajos: espacio (play/pausa), Mayús + ← / → (anterior/siguiente) y las teclas
   multimedia del teclado.
 
 Y sincronizada con el teléfono (como Spotify Connect):
 
 - **Lo que suena en el teléfono** aparece al momento en la web y se controla
-  desde ella (pausa, saltar, barra, elegir de la cola, añadir a la cola,
-  iniciar radio).
+  desde ella: pausa, saltar, la barra, elegir de la cola, añadir a la cola,
+  iniciar una radio o una emisora y mover el dial. Si el teléfono no contesta
+  en unos segundos, la web lo dice en vez de quedarse callada.
 - **Si el teléfono está sonando, lo que pongas en la web suena en el
-  teléfono.** Para que suene en el navegador, elige *Este navegador* en el
-  botón de dispositivos.
-- **Pasar la música de un sitio a otro:** botón de dispositivos; o en el
-  teléfono, barra "Escuchando en Navegador" → **Aquí**, o darle a play. Sigue
-  en el segundo exacto.
-- Si el dispositivo que reproducía se desconecta (pestaña cerrada, teléfono sin
-  red), la web lo detecta y te ofrece **seguir aquí** desde donde se quedó.
+  teléfono.**
+- **Pasar la música de un sitio a otro, en el mismo segundo:** en la web,
+  botón de dispositivos → *Este navegador* o el teléfono. En el teléfono,
+  botón de dispositivos del reproductor → el navegador o *Este teléfono*.
+- Si el dispositivo que reproducía se desconecta, la web te ofrece **seguir
+  aquí** desde donde se quedó.
 
 En el navegador el audio sale del reproductor oficial de YouTube incrustado,
-que tiene que estar visible mientras suena (lo exigen sus condiciones) y puede
-mostrar anuncios. Algunas canciones no permiten reproducirse incrustadas; en ese
-caso la web salta a la siguiente.
+que tiene que verse mientras suena (lo exigen sus condiciones) y puede mostrar
+anuncios. Si YouTube no deja incrustar una canción, la web prueba sola con otra
+versión del mismo tema (el vídeo oficial, por ejemplo) y, si no hay ninguna,
+pasa a la siguiente. Y si mandas la música al navegador desde el teléfono sin
+haber tocado antes esa pestaña, el navegador puede pedir un toque para
+arrancar el sonido: aparece el botón "Toca para que suene aquí".
+
+No están en la web: descargas para escuchar sin conexión, la letra, las
+estadísticas, las emisoras Coche y Tranquilo (necesitan datos de tempo que
+solo calcula la app) y los ajustes de la app.
 
 ## Búsqueda en YouTube (opcional)
 
@@ -142,7 +174,7 @@ de la que suena y en el orden en que las pidieron, como en la Jam de Spotify.
 
 | Ruta | Contenido |
 |---|---|
-| `playback` | Dispositivo activo, canción, posición, estado y próximas 50 canciones |
+| `playback` | Dispositivo activo, canción, posición, estado, próximas 50 canciones y, si suena una radio, el dial |
 | `devices/{id}` | Nombre, tipo y último latido de cada dispositivo conectado |
 | `commands/{id}` | Órdenes pendientes para ese dispositivo (se borran al ejecutarse) |
 | `library/playlists` | Tus playlists del teléfono (solo título, portada y canciones) |

@@ -28,6 +28,8 @@ class ConnectViewModel @Inject constructor(
 
     val status: StateFlow<ConnectStatus> = connectSync.status
     val remotePlayback: StateFlow<ConnectPlayback?> = connectSync.remotePlayback
+    /** The account's other devices that are online, to pass the music to. */
+    val devices: StateFlow<List<com.spotiaisexs.app.data.connect.ConnectDevice>> = connectSync.devices
     val jam: StateFlow<JamState?> = connectSync.jam
 
     private val _jamBusy = MutableStateFlow(false)
@@ -106,4 +108,5 @@ class ConnectViewModel @Inject constructor(
     fun next() = connectSync.sendCommand("next")
     fun previous() = connectSync.sendCommand("previous")
     fun playHere() = connectSync.playHere()
+    fun transferTo(deviceId: String) = connectSync.transferTo(deviceId)
 }

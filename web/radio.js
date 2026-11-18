@@ -207,11 +207,20 @@ function spaceArtists(tracks, tail) {
  * sugerido, y entrega tandas con next().
  */
 export class Radio {
-  constructor({ seed, style = "focused", apiKey, libraryTracks = () => [] }) {
+  /**
+   * [related]: función que da las canciones relacionadas con un vídeo ya con
+   * título y artista (el catálogo). Con ella la radio no gasta cuota de la
+   * API de YouTube ni necesita el reproductor oculto.
+   * [distance]: el dial, 0 (pegada a la canción) a 100 (todo nuevo).
+   */
+  constructor({ seed, style = "focused", apiKey, libraryTracks = () => [], related = null, distance = null }) {
     this.anchor = seed;
     this.style = style;
     this.apiKey = apiKey;
     this.libraryTracks = libraryTracks;
+    this.related = related;
+    this.distance = distance;
+    this.meta = new Map();
     this.usedSeeds = new Set();
     this.suggested = new Set();
     this.neighbourhood = new Set();
@@ -254,7 +263,14 @@ export class Radio {
     for (const [i, seed] of seeds.entries()) {
       if (!seed?.videoId) continue;
       this.usedSeeds.add(seed.videoId);
-      let ids = await mixIds(seed.videoId);
+      let ids;
+      if (this.related) {
+        const list = await this.related(seed.videoId).catch(() => []);
+        list.forEach((t) => this.meta.set(t.videoId, { ...t, playable: true }));
+        ids = list.map((t) => t.videoId);
+      } else {
+        ids = await mixIds(seed.videoId);
+      }
       if (focused || i > 0) ids = ids.slice(0, focused ? FOCUSED_MIX_LIMIT : 15);
       ids.forEach((id, rank) => {
         const c = candidates.get(id) || { sources: new Set(), rank: 99 };
@@ -265,7 +281,9 @@ export class Radio {
     }
     if (!candidates.size) return [];
 
-    const metas = await videoMeta([...candidates.keys()], this.apiKey);
+    const metas = this.related
+      ? [...candidates.keys()].map((id) => this.meta.get(id)).filter(Boolean)
+      : await videoMeta([...candidates.keys()], this.apiKey);
     const primarySeed = seeds[0];
 
     // Vecindario: artistas de la semilla y de lo más alto de su Mix.
@@ -311,7 +329,8 @@ export class Radio {
       tailArtists: upcoming.map(mainArtist),
     };
     const scored = eligible.map((c) => [c, score(c, ctx)]);
-    const discoveryShare = focused ? 0.1 : 0.4;
+    // Cuánto de lo que suena es nuevo para ti: lo decide el dial si lo hay.
+    const discoveryShare = this.distance == null ? (focused ? 0.1 : 0.4) : Math.min(0.9, Math.max(0.05, this.distance / 100));
     const isDiscovery = ([c]) => !ctx.tasteArtists.has(mainArtist(c.track)) && !history[historyKey(c.track)];
     const discovery = scored.filter(isDiscovery);
     const familiar = scored.filter((x) => !isDiscovery(x));

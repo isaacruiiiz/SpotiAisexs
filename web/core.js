@@ -776,7 +776,28 @@ export async function searchAll(query) {
   return { local, songs: [], artists: [], albums: [] };
 }
 
-/** "Esto es {artista}": sus éxitos alternados con lo que tienes tú de ese artista. */
+const THIS_IS_MAX = 60;
+const splitCredits = (credits) => String(credits || "").split(/\s*(?:,|&|;|\/|\+)\s*|\s+(?:ft\.?|feat\.?|featuring|with|and|x|y)\s+/i);
+const simple = (s) => norm(s).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+/** El artista canta en la canción: compara nombres enteros ("Eme" no es "Emeli Sandé"). */
+export function isBy(credits, artist) {
+  const wanted = simple(artist);
+  if (!wanted || !credits) return false;
+  return simple(credits) === wanted || splitCredits(credits).some((c) => simple(c) === wanted);
+}
+/** Una canción de cada álbum por turnos, para no poner un disco entero seguido. */
+function interleave(lists) {
+  const out = [];
+  const longest = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < longest; i++) lists.forEach((l) => { if (l[i]) out.push(l[i]); });
+  return out;
+}
+
+/**
+ * "Esto es {artista}": sus canciones alternadas con lo que tienes tú de ese
+ * artista, hasta 60. La página del artista a veces solo trae 5, así que se
+ * completa con una búsqueda de sus canciones y las de sus álbumes y sencillos.
+ */
 export async function buildThisIs(name, browseId = "") {
   let id = browseId;
   if (!id) id = (await catalog.searchArtists(name, 1))[0]?.browseId || "";
@@ -784,13 +805,30 @@ export async function buildThisIs(name, browseId = "") {
   const page = await catalog.artist(id);
   const key = norm(page.name);
   const mine = allLibraryTracks().filter((t) => norm(t.artist).includes(key));
+  let catalogSongs = page.topSongs;
+  if (new Set([...page.topSongs, ...mine].map((t) => coreTitle(t.title))).size < THIS_IS_MAX) {
+    const releases = [...page.albums, ...page.singles].filter((r) => r.browseId).slice(0, 12);
+    const [found, ...albums] = await Promise.all([
+      catalog.searchSongs(page.name, 60).catch(() => []),
+      ...releases.map((r) => catalog.album(r.browseId).then((al) => al.tracks).catch(() => [])),
+    ]);
+    const more = [...found, ...interleave(albums)].filter((t) => isBy(t.artist, page.name));
+    catalogSongs = [...page.topSongs, ...more];
+  }
+  const byKey = new Map();
+  catalogSongs.forEach((t) => { const k = coreTitle(t.title); if (!byKey.has(k)) byKey.set(k, t); });
   const mineKeys = new Set(mine.map((t) => coreTitle(t.title)));
+  // Si tienes el vídeo de una canción que también está en el catálogo, suena la canción.
+  const mineSongs = mine.slice(0, 20).map((t) => byKey.get(coreTitle(t.title)) || t);
   const out = [];
   const seen = new Set();
-  const add = (t) => { const k = coreTitle(t.title); if (out.length < 40 && !seen.has(k) && !seen.has(t.videoId)) { seen.add(k); seen.add(t.videoId); out.push({ ...t, mine: mineKeys.has(k) }); } };
-  for (let i = 0; i < Math.max(mine.length, page.topSongs.length) && out.length < 40; i++) {
-    if (mine[i] && i < 20) add(mine[i]);
-    if (page.topSongs[i]) add(page.topSongs[i]);
+  const add = (t) => {
+    const k = coreTitle(t.title);
+    if (out.length < THIS_IS_MAX && !seen.has(k) && !seen.has(t.videoId)) { seen.add(k); seen.add(t.videoId); out.push({ ...t, mine: mineKeys.has(k) }); }
+  };
+  for (let i = 0; i < Math.max(mineSongs.length, catalogSongs.length) && out.length < THIS_IS_MAX; i++) {
+    if (mineSongs[i]) add(mineSongs[i]);
+    if (catalogSongs[i]) add(catalogSongs[i]);
   }
   return { artist: page, tracks: out, hasMine: out.some((t) => t.mine) };
 }

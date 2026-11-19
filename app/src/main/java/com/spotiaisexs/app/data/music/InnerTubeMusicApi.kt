@@ -62,6 +62,8 @@ data class YouTubeMusicTrack(
     val album: String? = null,
     val artworkUrl: String? = null,
     val durationSeconds: Int? = null,
+    /** A video (official video, lyric video, someone's upload) rather than the song's audio. */
+    val isVideo: Boolean = false,
 )
 
 enum class YouTubeMusicEntityKind { ARTIST, ALBUM }
@@ -1532,6 +1534,8 @@ class InnerTubeMusicApi @Inject constructor(
         val finalResults = results
             .distinctBy { it.videoId }
             .filter { it.videoId.isNotBlank() }
+            // The song's audio before any video of it (stable: the order is otherwise kept).
+            .sortedBy { it.isVideo }
             .take(limit)
         if (prefetchStreams) finalResults.take(2).forEach { prefetchStream(it.videoId) }
         finalResults
@@ -3271,9 +3275,25 @@ class InnerTubeMusicApi @Inject constructor(
         songs.addAll(renderers.mapNotNull(::parseSong))
 
 
-        val queueRenderers = mutableListOf<JsonObject>()
-        collectObjects(root, "playlistPanelVideoRenderer", queueRenderers)
-        songs.addAll(queueRenderers.mapNotNull(::parsePlaylistPanelSong))
+        // "Up next" lists: an item that exists as song and as video comes
+        // wrapped with both versions (YouTube Music's Song/Video switch).
+        // Only one is kept, the song, in the list's own order.
+        val panels = mutableListOf<JsonObject>()
+        collectObjects(root, "playlistPanelRenderer", panels)
+        val panelSongs = panels.flatMap { panel ->
+            panel.array("contents").orEmpty().mapNotNull { item ->
+                val entry = item.asObject() ?: return@mapNotNull null
+                entry.obj("playlistPanelVideoWrapperRenderer")?.let(::pickSongVersion)
+                    ?: entry.obj("playlistPanelVideoRenderer")?.let(::parsePlaylistPanelSong)
+            }
+        }
+        if (panelSongs.isNotEmpty()) {
+            songs.addAll(panelSongs)
+        } else {
+            val queueRenderers = mutableListOf<JsonObject>()
+            collectObjects(root, "playlistPanelVideoRenderer", queueRenderers)
+            songs.addAll(queueRenderers.mapNotNull(::parsePlaylistPanelSong))
+        }
 
         if (songs.isEmpty()) {
             val ytVideos = mutableListOf<JsonObject>()
@@ -3290,6 +3310,108 @@ class InnerTubeMusicApi @Inject constructor(
         return songs.distinctBy { it.videoId }.filter { it.videoId.isNotBlank() }
     }
 
+    // ── Song or video ────────────────────────────────────────────────────
+    // YouTube Music says what each item is (musicVideoType): ATV is the
+    // song's audio; OMV, UGC and OFFICIAL_SOURCE_MUSIC are videos. The user
+    // listens to music, so everywhere a song can come from, its audio wins.
+
+    private val knownVideoIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val knownSongIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    /** Video id → id of the same song as audio (the video id itself when there is none). */
+    private val songVersions = ConcurrentHashMap<String, String>()
+
+    private fun videoTypeOf(renderer: JsonObject): String? =
+        // A card's "contents" holds other results and the menu other actions: only the item's own type counts.
+        findString(JsonObject(renderer.filterKeys { it != "contents" && it != "menu" }), "musicVideoType")
+
+    private fun YouTubeMusicTrack.withKind(type: String?, plainYouTube: Boolean = false): YouTubeMusicTrack {
+        val video = when {
+            type == SONG_TYPE -> false
+            type in VIDEO_TYPES -> true
+            else -> plainYouTube || TextMatch.looksLikeVideoTitle(title)
+        }
+        return (if (video == isVideo) this else copy(isVideo = video)).also(::rememberKind)
+    }
+
+    private fun rememberKind(track: YouTubeMusicTrack) {
+        val set = if (track.isVideo) knownVideoIds else knownSongIds
+        if (set.size > MAX_KIND_MEMORY) set.clear()
+        set += track.videoId
+    }
+
+    /** Of an item offered as song and as video, the song (or the first version when none is a song). */
+    private fun pickSongVersion(wrapper: JsonObject): YouTubeMusicTrack? {
+        val versions = buildList {
+            wrapper.obj("primaryRenderer")?.obj("playlistPanelVideoRenderer")?.let(::add)
+            wrapper.array("counterpart")?.forEach { part ->
+                part.asObject()?.obj("counterpartRenderer")?.obj("playlistPanelVideoRenderer")?.let(::add)
+            }
+        }.mapNotNull(::parsePlaylistPanelSong)
+        val song = versions.firstOrNull { !it.isVideo }
+        if (song != null) versions.filter { it.isVideo }.forEach { songVersions[it.videoId] = song.videoId }
+        return song ?: versions.firstOrNull()
+    }
+
+    /**
+     * The id of the song's audio when [videoId] is a video of it, or null when
+     * it already is the song or no audio version exists. Only items known to
+     * be videos, or whose title says so ("Official Video", "Lyric Video",
+     * "Videoclip"…), cost a request: YouTube Music's own Song/Video pair, and
+     * failing that a search for the song. The answer is remembered.
+     */
+    suspend fun songVersionOf(videoId: String, title: String, artist: String): String? = withContext(Dispatchers.IO) {
+        if (videoId.isBlank()) return@withContext null
+        songVersions[videoId]?.let { return@withContext it.takeIf { id -> id != videoId } }
+        if (videoId in knownSongIds) return@withContext null
+        if (videoId !in knownVideoIds && !TextMatch.looksLikeVideoTitle(title)) return@withContext null
+        val found = runCatching { counterpartSong(videoId) }.getOrNull()
+            ?: runCatching { searchSongVersion(videoId, title, artist) }.getOrNull()
+        if (songVersions.size > MAX_KIND_MEMORY) songVersions.clear()
+        songVersions[videoId] = found ?: videoId
+        found
+    }
+
+    private suspend fun counterpartSong(videoId: String): String? {
+        val config = getWebConfig()
+        val root = post(
+            url = "$MUSIC_API/next?key=${config.apiKey}&prettyPrint=false",
+            body = buildJsonObject {
+                put("context", context("WEB_REMIX", config.clientVersion, config.visitorData))
+                put("videoId", videoId)
+                put("isAudioOnly", true)
+            },
+            clientName = "WEB_REMIX",
+            clientVersion = config.clientVersion,
+            userAgent = WEB_USER_AGENT,
+            callTimeoutMs = RELATED_REQUEST_TIMEOUT_MS,
+        )
+        val wrappers = mutableListOf<JsonObject>()
+        collectObjects(root, "playlistPanelVideoWrapperRenderer", wrappers)
+        for (wrapper in wrappers) {
+            val ids = buildList {
+                wrapper.obj("primaryRenderer")?.obj("playlistPanelVideoRenderer")?.let(::add)
+                wrapper.array("counterpart")?.forEach { part ->
+                    part.asObject()?.obj("counterpartRenderer")?.obj("playlistPanelVideoRenderer")?.let(::add)
+                }
+            }.mapNotNull(::parsePlaylistPanelSong)
+            if (ids.none { it.videoId == videoId }) continue
+            return ids.firstOrNull { !it.isVideo && it.videoId != videoId }?.videoId
+        }
+        return null
+    }
+
+    private suspend fun searchSongVersion(videoId: String, title: String, artist: String): String? {
+        val cleanTitle = TextMatch.withoutVideoWords(title)
+        val cleanArtist = artist.takeUnless { it.equals("Unknown artist", ignoreCase = true) }.orEmpty()
+        val results = searchSongs(listOf(cleanTitle, cleanArtist).filter { it.isNotBlank() }.joinToString(" "), limit = 10, prefetchStreams = false)
+        return results.asSequence()
+            .filter { !it.isVideo && it.videoId != videoId }
+            .filter { TextMatch.similarity(TextMatch.baseTitle(it.title), TextMatch.baseTitle(cleanTitle)) >= 80 }
+            .filter { cleanArtist.isBlank() || TextMatch.similarity(it.artist, cleanArtist) >= 35 || TextMatch.normalize(it.artist).contains(TextMatch.normalize(cleanArtist)) }
+            .maxByOrNull { TextMatch.matchScore(it, cleanTitle, cleanArtist) }
+            ?.videoId
+    }
+
     private fun parseVideoRenderer(renderer: JsonObject): YouTubeMusicTrack? {
         val videoId = renderer.string("videoId") ?: return null
         val title = renderer.obj("title")?.array("runs")?.joinToString("") { it.asObject()?.string("text").orEmpty() }
@@ -3302,7 +3424,7 @@ class InnerTubeMusicApi @Inject constructor(
             ?: renderer.string("lengthSeconds")?.toIntOrNull()
         val thumbnails = renderer.obj("thumbnail")?.array("thumbnails")
         val artwork = thumbnails?.lastOrNull()?.asObject()?.string("url")?.highResolutionArtwork()
-        return YouTubeMusicTrack(videoId, title, artist, null, artwork, duration)
+        return YouTubeMusicTrack(videoId, title, artist, null, artwork, duration, isVideo = true).also(::rememberKind)
     }
 
     /** Home carousels use compact two-row cards. Only cards whose own
@@ -3356,7 +3478,7 @@ class InnerTubeMusicApi @Inject constructor(
         }?.string("text")
         val duration = subRuns.mapNotNull { it.string("text") }.firstNotNullOfOrNull(::parseDuration)
         val artwork = extractThumbnailsUrl(renderer)
-        return YouTubeMusicTrack(videoId, title, artist, album, artwork, duration)
+        return YouTubeMusicTrack(videoId, title, artist, album, artwork, duration).withKind(videoTypeOf(renderer))
     }
 
     private fun parseTwoRowSong(renderer: JsonObject): YouTubeMusicTrack? {
@@ -3388,7 +3510,7 @@ class InnerTubeMusicApi @Inject constructor(
                 ?.lastOrNull()?.asObject()?.string("url")?.let {
                     if (it.startsWith("//")) "https:$it" else it
                 }?.highResolutionArtwork()
-        return YouTubeMusicTrack(videoId, title, artist, album, artwork, duration)
+        return YouTubeMusicTrack(videoId, title, artist, album, artwork, duration).withKind(videoTypeOf(renderer))
     }
 
     private fun parsePlaylistVideoRenderer(renderer: JsonObject): YouTubeMusicTrack? {
@@ -3402,7 +3524,7 @@ class InnerTubeMusicApi @Inject constructor(
         val thumbnails = renderer.obj("thumbnail")?.array("thumbnails")
         val artwork = thumbnails?.lastOrNull()?.asObject()?.string("url")?.highResolutionArtwork()
             ?: extractThumbnailsUrl(renderer)
-        return YouTubeMusicTrack(videoId, title, artist, null, artwork, duration)
+        return YouTubeMusicTrack(videoId, title, artist, null, artwork, duration).withKind(videoTypeOf(renderer), plainYouTube = true)
     }
 
     private fun parsePlaylistPanelSong(renderer: JsonObject): YouTubeMusicTrack? {
@@ -3435,7 +3557,7 @@ class InnerTubeMusicApi @Inject constructor(
                 ?.lastOrNull()?.asObject()?.string("url")?.let {
                     if (it.startsWith("//")) "https:$it" else it
                 }?.highResolutionArtwork()
-        return YouTubeMusicTrack(videoId, title, artist, album, artwork, duration)
+        return YouTubeMusicTrack(videoId, title, artist, album, artwork, duration).withKind(videoTypeOf(renderer))
     }
 
     private fun parseSong(renderer: JsonObject): YouTubeMusicTrack? {
@@ -3477,7 +3599,7 @@ class InnerTubeMusicApi @Inject constructor(
         val duration = allDetailRuns.mapNotNull { it.string("text") }.firstNotNullOfOrNull(::parseDuration)
             ?: renderer.string("lengthSeconds")?.toIntOrNull()
         val artwork = extractThumbnailsUrl(renderer)
-        return YouTubeMusicTrack(videoId, title, artist, album, artwork, duration)
+        return YouTubeMusicTrack(videoId, title, artist, album, artwork, duration).withKind(videoTypeOf(renderer))
     }
 
     private fun parseEntityRenderers(root: JsonElement, kind: YouTubeMusicEntityKind): List<YouTubeMusicEntity> {
@@ -3820,6 +3942,9 @@ class InnerTubeMusicApi @Inject constructor(
         const val MAX_PLAYER_REQUEST_ATTEMPTS = 2
         const val CONFIG_REQUEST_TIMEOUT_MS = 4_000L
         const val RELATED_REQUEST_TIMEOUT_MS = 8_000L
+        private const val SONG_TYPE = "MUSIC_VIDEO_TYPE_ATV"
+        private val VIDEO_TYPES = setOf("MUSIC_VIDEO_TYPE_OMV", "MUSIC_VIDEO_TYPE_UGC", "MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC")
+        private const val MAX_KIND_MEMORY = 5_000
         /** Per-call cap for interactive search POSTs: without it a hanging
          *  search burns both socket timeouts per attempt and stalls playback
          *  resolution with no error. Normal searches answer in ~1s. */

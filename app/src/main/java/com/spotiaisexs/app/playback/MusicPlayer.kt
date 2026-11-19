@@ -1971,30 +1971,52 @@ class MusicPlayer @Inject constructor(
         }
     }
 
+    /**
+     * "Añadir a la cola", like Spotify: the song goes right after the current
+     * one and after the songs already added this way, before whatever was
+     * lined up (the rest of a playlist, the radio). Appending it at the very
+     * end hid it behind dozens of radio songs, as if it had not been added.
+     */
     fun addToQueue(track: PlayableTrack) {
         applicationScope.launch {
             val enriched = runCatching { matchMetadata(track) }.getOrDefault(track)
             withContext(Dispatchers.Main.immediate) {
+                // A song the radio had suggested is now the user's: rebuilding the radio must not drop it.
+                radioSuggestedKeys.remove(enriched.queueKey())
                 if (isCasting) {
-                    _state.update { it.copy(queue = it.queue + enriched) }
+                    _state.update { snapshot ->
+                        val queue = snapshot.queue.toMutableList()
+                        var at = (snapshot.currentIndex + 1).coerceIn(0, queue.size)
+                        while (at < queue.size && queue[at].mediaIdKey() in userQueuedIds) at++
+                        queue.add(at, enriched)
+                        snapshot.copy(queue = queue)
+                    }
+                    rememberUserQueued(enriched.mediaIdKey())
                     persistPlaybackSession()
                 } else {
                     val wasEnded = player.playbackState == Player.STATE_ENDED
                     val wasEmpty = player.mediaItemCount == 0
-                    val previousCount = player.mediaItemCount
-                    player.addMediaItem(enriched.toMediaItem())
-                    // Under shuffle the append lands at a random permutation
-                    // spot; pin it at the end of the actual play order.
-                    placeInsertedIndexInShuffleOrder(player.mediaItemCount - 1, last = true)
-                    refresh(player)
                     val currentIndex = player.currentMediaItemIndex
-                    enrichUpcomingQueue(currentIndex.coerceAtLeast(0))
-                    val nextIndex = if (player.shuffleModeEnabled) player.nextMediaItemIndex else currentIndex + 1
-                    if (nextIndex == player.mediaItemCount - 1) {
+                    var index = if (wasEmpty) 0 else (currentIndex + 1).coerceIn(0, player.mediaItemCount)
+                    var queuedBefore = 0
+                    while (index < player.mediaItemCount && player.getMediaItemAt(index).mediaId in userQueuedIds) {
+                        index++
+                        queuedBefore++
+                    }
+                    val item = enriched.toMediaItem()
+                    player.addMediaItem(index, item)
+                    rememberUserQueued(item.mediaId)
+                    // Under shuffle the insert lands at a random permutation
+                    // spot; pin it after the current song and the ones queued before it.
+                    placeInsertedIndexInShuffleOrder(index, last = false, after = queuedBefore)
+                    refresh(player)
+                    enrichUpcomingQueue(player.currentMediaItemIndex.coerceAtLeast(0))
+                    val nextIndex = if (player.shuffleModeEnabled) player.nextMediaItemIndex else player.currentMediaItemIndex + 1
+                    if (nextIndex == index) {
                         preloadNextTrack(nextIndex, player.getMediaItemAt(nextIndex).toPlayableTrack())
                     }
-                    if (wasEmpty || (wasEnded && currentIndex >= previousCount - 1)) {
-                        player.seekToDefaultPosition(previousCount)
+                    if (wasEmpty || (wasEnded && index >= player.mediaItemCount - 1)) {
+                        player.seekToDefaultPosition(index)
                         player.prepare()
                         player.play()
                     }
@@ -2002,6 +2024,15 @@ class MusicPlayer @Inject constructor(
                 }
             }
         }
+    }
+
+    /** Media ids of the songs added with "Añadir a la cola" (the newest few hundred). */
+    private val userQueuedIds = LinkedHashSet<String>()
+
+    private fun rememberUserQueued(mediaId: String) {
+        userQueuedIds.remove(mediaId)
+        userQueuedIds += mediaId
+        while (userQueuedIds.size > USER_QUEUED_MEMORY) userQueuedIds.remove(userQueuedIds.first())
     }
 
     private val prefetchedStarts = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
@@ -3053,7 +3084,7 @@ class MusicPlayer @Inject constructor(
      * it at the end of the play order. Main thread only.
      */
     @MainThread
-    private fun placeInsertedIndexInShuffleOrder(index: Int, last: Boolean) {
+    private fun placeInsertedIndexInShuffleOrder(index: Int, last: Boolean, after: Int = 0) {
         if (!player.shuffleModeEnabled) return
         val timeline = player.currentTimeline
         if (timeline.isEmpty || index !in 0 until player.mediaItemCount) return
@@ -3071,7 +3102,7 @@ class MusicPlayer @Inject constructor(
         if (last || currentPos == -1) {
             order.add(index)
         } else {
-            val at = (currentPos + 1).coerceIn(0, order.size)
+            val at = (currentPos + 1 + after.coerceAtLeast(0)).coerceIn(0, order.size)
             order.add(at, index)
         }
         player.setShuffleOrder(DefaultShuffleOrder(order.toIntArray(), Random.nextLong()))
@@ -5967,18 +5998,27 @@ class MusicPlayer @Inject constructor(
         val rejectedVideoIds = mutableSetOf<String>()
         var lastFailure: Throwable? = null
         var resolved: YouTubeAudioStream? = null
-        // Single direct attempt (no retry): instant peek cache, else one resolve.
+        // The song's audio over a video of it ("Official Video", a lyric
+        // video…): only items known or titled as videos cost a lookup, it is
+        // remembered, and if the song's audio fails the video still plays.
+        val songVersion = videoId?.takeIf(String::isNotBlank)?.let { id ->
+            withTimeoutOrNull(SONG_VERSION_TIMEOUT_MS) {
+                runCatching { innerTube.songVersionOf(id, track.title, track.artist) }.getOrNull()
+            }
+        }
+        // Direct attempts (no retry): instant peek cache, else one resolve.
         // Desktop-style: if videoId is known, resolve directly without search.
-        if (!videoId.isNullOrBlank()) {
-            resolved = innerTube.peekCachedStream(videoId)
+        for (directId in listOfNotNull(songVersion, videoId?.takeIf(String::isNotBlank))) {
+            if (resolved != null) break
+            resolved = innerTube.peekCachedStream(directId)
             if (resolved == null) {
                 try {
-                    resolved = innerTube.resolveAudioStream(videoId)
+                    resolved = innerTube.resolveAudioStream(directId)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Throwable) {
                     lastFailure = failure
-                    rejectedVideoIds += videoId
+                    rejectedVideoIds += directId
                 }
             }
         }
@@ -6909,6 +6949,9 @@ class MusicPlayer @Inject constructor(
         const val SAME_ARTIST_RELATED_LIMIT = 15
         const val SAME_ARTIST_TOP_RANK = 6
         const val RADIO_LASTFM_BUDGET_MS = 4_000L
+        /** At most this long finding the song's audio for a video before playing the video as it is. */
+        const val SONG_VERSION_TIMEOUT_MS = 3_500L
+        const val USER_QUEUED_MEMORY = 300
         const val RADIO_FACTS_BUDGET_MS = 6_000L
         const val RADIO_TAGS_BUDGET_MS = 4_000L
         const val RADIO_STATION_FACTS_BUDGET_MS = 2_500L

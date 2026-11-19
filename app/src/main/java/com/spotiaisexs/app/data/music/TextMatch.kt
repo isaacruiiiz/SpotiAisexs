@@ -28,6 +28,20 @@ internal object TextMatch {
     private val VERSION_CLAUSE =
         Regex("(?i)[(\\[][^)\\]]*(live|remix|acoustic|demo|edit|remaster(?:ed)?|mono|stereo)[^)\\]]*[)\\]]")
 
+    // "(Official Video)", "[Official Music Video]", "(Lyric Video)", "(Video Oficial)",
+    // "(Videoclip)", "(Visualizer)", "[MV]"… and a bare "(Video)".
+    private val VIDEO_CLAUSE = Regex(
+        "(?i)[(\\[][^)\\]]*(official\\s+(music\\s+)?video|music\\s+video|lyrics?\\s+video|video\\s*(oficial|official|musical|lyric)|videoclip|video\\s+clip|visuali[sz]er|official\\s+visuali[sz]er|performance\\s+video|\\bmv\\b)[^)\\]]*[)\\]]|[(\\[]\\s*video\\s*[)\\]]",
+    )
+    private val VIDEO_SUFFIX = Regex("(?i)\\s+[-|]\\s*(official\\s+(music\\s+)?video|lyrics?\\s+video|video\\s*oficial|videoclip)\\s*$")
+
+    /** The title is that of a video of the song rather than the song itself. */
+    fun looksLikeVideoTitle(title: String): Boolean = VIDEO_CLAUSE.containsMatchIn(title) || VIDEO_SUFFIX.containsMatchIn(title)
+
+    /** The title without its video label: "drivers license (Official Video)" → "drivers license". */
+    fun withoutVideoWords(title: String): String =
+        title.replace(VIDEO_CLAUSE, " ").replace(VIDEO_SUFFIX, " ").replace(MULTI_SPACE, " ").trim().ifBlank { title }
+
     fun normalize(value: String): String =
         Normalizer.normalize(value.lowercase(Locale.ROOT), Normalizer.Form.NFD)
             .replace(DIACRITICS, "")
@@ -77,6 +91,8 @@ internal object TextMatch {
         val wantedVariants = tokens(title).intersect(VARIANT_WORDS)
         val unexpectedVariants = tokens(candidate.title).intersect(VARIANT_WORDS) - wantedVariants
         score -= unexpectedVariants.size * 250
+        // The song's audio over a video of it, unless a video is what was asked for.
+        if (candidate.isVideo && !looksLikeVideoTitle(title)) score -= 300
         if (wantedArtist.isNotBlank()) {
             val artistSim = similarity(candidate.artist, artist)
             val artistContains = candidateArtist.contains(wantedArtist) || wantedArtist.contains(candidateArtist)

@@ -130,18 +130,45 @@ function parsePanelSong(r) {
   const title = runsText(r.title);
   if (!videoId || !title) return null;
   const runs = (r.longBylineText || r.shortBylineText)?.runs || [];
-  const track = trackFromRuns(videoId, title, runs, r);
+  const track = trackFromRuns(videoId, title, runs, r, { isVideo: isVideoItem(r) });
   const length = (r.lengthText?.runs || []).map((x) => parseDuration(x.text)).find(Boolean);
   if (length) track.durationMs = length;
   return track;
 }
 
+// YouTube Music dice qué es cada cosa: ATV es el audio de la canción; OMV,
+// UGC y OFFICIAL_SOURCE_MUSIC son vídeos. Siempre se prefiere la canción.
+const VIDEO_TYPES = new Set(["MUSIC_VIDEO_TYPE_OMV", "MUSIC_VIDEO_TYPE_UGC", "MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC"]);
+const isVideoItem = (r) => {
+  const { menu, contents, ...own } = r || {};
+  return VIDEO_TYPES.has(findString(own, "musicVideoType"));
+};
+
+/** De una canción que viene como canción y como vídeo (el interruptor de YouTube Music), la canción. */
+function pickSongVersion(wrapper) {
+  const versions = [wrapper.primaryRenderer?.playlistPanelVideoRenderer, ...(wrapper.counterpart || []).map((c) => c?.counterpartRenderer?.playlistPanelVideoRenderer)].filter(Boolean);
+  const pick = versions.find((v) => !isVideoItem(v)) || versions[0];
+  return pick ? parsePanelSong(pick) : null;
+}
+
 function songsIn(root) {
   const out = [];
-  collect(root, "musicResponsiveListItemRenderer").forEach((r) => { const t = parseSong(r); if (t) out.push(t); });
-  collect(root, "playlistPanelVideoRenderer").forEach((r) => { const t = parsePanelSong(r); if (t) out.push(t); });
+  collect(root, "musicResponsiveListItemRenderer").forEach((r) => { const t = parseSong(r); if (t) out.push({ ...t, isVideo: isVideoItem(r) }); });
+  // Listas "a continuación" (la radio): en su orden y una sola versión de cada canción.
+  const panels = collect(root, "playlistPanelRenderer");
+  if (panels.length) {
+    panels.forEach((panel) => (panel.contents || []).forEach((item) => {
+      const t = item.playlistPanelVideoWrapperRenderer ? pickSongVersion(item.playlistPanelVideoWrapperRenderer)
+        : item.playlistPanelVideoRenderer ? parsePanelSong(item.playlistPanelVideoRenderer) : null;
+      if (t) out.push(t);
+    }));
+  } else {
+    collect(root, "playlistPanelVideoRenderer").forEach((r) => { const t = parsePanelSong(r); if (t) out.push(t); });
+  }
   const seen = new Set();
-  return out.filter((t) => !seen.has(t.videoId) && seen.add(t.videoId));
+  // La canción antes que cualquier vídeo de ella; el resto del orden se mantiene.
+  return out.filter((t) => !seen.has(t.videoId) && seen.add(t.videoId))
+    .map((t, i) => [t, i]).sort((a, b) => (a[0].isVideo ? 1 : 0) - (b[0].isVideo ? 1 : 0) || a[1] - b[1]).map(([t]) => t);
 }
 
 function entitiesIn(root, prefix) {

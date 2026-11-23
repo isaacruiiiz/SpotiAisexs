@@ -417,6 +417,26 @@ fun RadioHomeScreen(
             }
         }
 
+        // Mood playlists: built when opened, from YouTube Music and the user's own songs.
+        item(key = "moods") {
+            Column(Modifier.padding(top = 20.dp)) {
+                SectionTitle("Para cada momento", Modifier.padding(horizontal = 20.dp))
+                Spacer(Modifier.height(8.dp))
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(com.spotiaisexs.app.data.mood.Mood.entries, key = { "mood:${it.id}" }) { mood ->
+                        MoodTile(
+                            title = mood.title,
+                            subtitle = mood.subtitle,
+                            onClick = { onOpenFeedPlaylist(com.spotiaisexs.app.data.mood.MoodPlaylists.idFor(mood)) },
+                        )
+                    }
+                }
+            }
+        }
+
         if (artists.isNotEmpty()) {
             item(key = "artists") {
                 Column(Modifier.padding(top = 20.dp)) {
@@ -590,6 +610,54 @@ private fun CoverTile(
  * with the name in the big serif and an accent strip, so the series is
  * recognisable at a glance among the other playlists.
  */
+/** A mood playlist on the home: flat tile with the accent strip and the name in the serif. */
+@Composable
+private fun MoodTile(title: String, subtitle: String, onClick: () -> Unit) {
+    val view = androidx.compose.ui.platform.LocalView.current
+    Column(
+        Modifier
+            .width(132.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable {
+                com.spotiaisexs.app.ui.common.DialHaptics.click(view)
+                onClick()
+            },
+    ) {
+        Box(
+            Modifier
+                .size(132.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .width(4.dp)
+                    .height(36.dp)
+                    .background(MaterialTheme.colorScheme.primary),
+            )
+            Text(
+                title,
+                style = heroTitle(30),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 12.dp, end = 10.dp, bottom = 10.dp),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 @Composable
 private fun ThisIsTile(artist: String, imageUrl: String?, onClick: () -> Unit) {
     Column(Modifier.width(132.dp).clickable(onClick = onClick)) {

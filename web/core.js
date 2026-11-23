@@ -833,6 +833,53 @@ export async function buildThisIs(name, browseId = "") {
   return { artist: page, tracks: out, hasMine: out.some((t) => t.mine) };
 }
 
+// ── Playlists de mood ───────────────────────────────────────────────────
+// Las mismas que en la app: canciones de las playlists de YouTube Music para
+// cada mood, una de cada lista por turnos. Las que tienes en tu biblioteca se
+// marcan como tuyas y van primero.
+export const MOODS = [
+  { id: "gym", title: "Gym", subtitle: "Para darlo todo", searches: ["workout hits gym", "gym motivation songs"] },
+  { id: "motivacion", title: "Motivación", subtitle: "Para venirte arriba", searches: ["canciones motivación", "feel good hits"] },
+  { id: "chill", title: "Chill", subtitle: "Para bajar revoluciones", searches: ["chill vibes", "chill pop relax"] },
+  { id: "fiesta", title: "Fiesta", subtitle: "Para la previa", searches: ["fiesta éxitos", "party hits"] },
+  { id: "pop-es", title: "Pop español", subtitle: "Pop en español", searches: ["pop español éxitos", "pop en español"] },
+  { id: "pop-en", title: "Pop inglés", subtitle: "Pop en inglés", searches: ["pop hits", "english pop hits"] },
+  { id: "70s", title: "Años 70", subtitle: "Lo mejor de los 70", searches: ["70s hits", "éxitos años 70"] },
+  { id: "80s", title: "Años 80", subtitle: "Lo mejor de los 80", searches: ["80s hits", "éxitos años 80"] },
+  { id: "90s", title: "Años 90", subtitle: "Lo mejor de los 90", searches: ["90s hits", "éxitos años 90"] },
+  { id: "2000s", title: "Años 2000", subtitle: "Lo mejor de los 2000", searches: ["2000s hits", "éxitos años 2000"] },
+];
+const VIDEO_LABEL = /\s*[(\[][^)\]]*(official\s+(music\s+)?video|music\s+video|lyrics?\s+video|video\s*(oficial|official|musical|lyric)|videoclip|visuali[sz]er|\bmv\b)[^)\]]*[)\]]|\s*[(\[]\s*video\s*[)\]]/gi;
+const moodCache = new Map();
+
+export async function buildMood(id) {
+  const mood = MOODS.find((m) => m.id === id);
+  if (!mood) throw new Error("Esta playlist no existe");
+  const hit = moodCache.get(id);
+  if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.data;
+  const found = (await Promise.all(mood.searches.map((q) => catalog.searchPlaylists(q, 6).catch(() => [])))).flat();
+  const seenIds = new Set();
+  const chosen = [...found.filter((p) => p.id.startsWith("RDCLAK") || /youtube music/i.test(p.author)), ...found]
+    .filter((p) => !seenIds.has(p.id) && seenIds.add(p.id)).slice(0, 3);
+  const lists = await Promise.all(chosen.map((p) => catalog.playlist(p.id).then((pl) => pl.tracks).catch(() => [])));
+  const mineKeys = new Set(allLibraryTracks().map((t) => coreTitle(t.title)));
+  const out = [];
+  const seen = new Set();
+  for (const t of interleave(lists)) {
+    const title = t.title.replace(VIDEO_LABEL, "").trim() || t.title;
+    const k = coreTitle(title);
+    if (out.length >= THIS_IS_MAX || seen.has(k) || seen.has(t.videoId)) continue;
+    seen.add(k); seen.add(t.videoId);
+    out.push({ ...t, title, mine: mineKeys.has(k) });
+  }
+  if (!out.length) throw new Error(`No hay canciones para ${mood.title} ahora mismo. Reintenta.`);
+  // Tus canciones primero, luego el resto en su orden.
+  const tracks = [...out.filter((t) => t.mine), ...out.filter((t) => !t.mine)];
+  const data = { mood, title: mood.title, artworkUrl: chosen[0]?.artworkUrl || tracks[0].artworkUrl, tracks, hasMine: tracks.some((t) => t.mine) };
+  moodCache.set(id, { at: Date.now(), data });
+  return data;
+}
+
 // ── Jam ─────────────────────────────────────────────────────────────────
 // Los amigos abren jam.html (sin cuenta) y piden canciones; aquí solo se
 // atienden si este navegador es el que reproduce (o, si no suena nada en

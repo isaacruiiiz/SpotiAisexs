@@ -13,6 +13,7 @@ const SONGS = "EgWKAQIIAWoKEAkQBRAKEAMQBA==";
 const VIDEOS = "EgWKAQIQAWoKEAkQBRAKEAMQBA==";
 const ARTISTS = "EgWKAQIgAWoKEAkQBRAKEAMQBA==";
 const ALBUMS = "EgWKAQIYAWoKEAkQBRAKEAMQBA==";
+const PLAYLISTS = "Eg-KAQwIABAAGAAgACgB";
 const CACHE_MS = 10 * 60 * 1000;
 const cache = new Map();
 
@@ -182,7 +183,8 @@ function entitiesIn(root, prefix) {
     const details = cols[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
     const artistRun = details.find((x) => browseIdOf(x).startsWith("UC"));
     const year = details.map((x) => (x.text || "").trim()).find((t) => /^(19|20)\d{2}$/.test(t));
-    out.push({ browseId, name, artist: artistRun?.text || "", artistId: artistRun ? browseIdOf(artistRun) : "", year: year || "", artworkUrl: thumbOf(r) });
+    out.push({ browseId, name, artist: artistRun?.text || "", artistId: artistRun ? browseIdOf(artistRun) : "", year: year || "", artworkUrl: thumbOf(r),
+      details: details.map((x) => (x.text || "").trim()).filter((t) => t && t !== "•").join(" ") });
   });
   const seen = new Set();
   return out.filter((e) => !seen.has(e.browseId) && seen.add(e.browseId));
@@ -231,6 +233,14 @@ export async function searchSongs(query, limit = 20) {
 /** Vídeos del mismo tema: se usan cuando YouTube no deja incrustar la versión "canción". */
 export async function searchVideos(query, limit = 6) {
   return songsIn(await call("search", { query: query.trim(), params: VIDEOS })).slice(0, limit);
+}
+
+/** Playlists de YouTube Music para [query]; las suyas propias (RDCLAK… o de "YouTube Music") primero. */
+export async function searchPlaylists(query, limit = 8) {
+  const found = entitiesIn(await call("search", { query: query.trim(), params: PLAYLISTS }), "VL")
+    .map((e) => ({ id: e.browseId.slice(2), title: e.name, author: e.details, artworkUrl: e.artworkUrl }));
+  const own = (p) => p.id.startsWith("RDCLAK") || /youtube music/i.test(p.author);
+  return [...found.filter(own), ...found.filter((p) => !own(p))].slice(0, limit);
 }
 
 export async function searchArtists(query, limit = 5) {

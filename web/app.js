@@ -86,13 +86,13 @@ let search = { query: "", loading: false, error: "", results: null };
 
 function parseRoute() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
-  const names = { "": "home", buscar: "search", biblioteca: "library", playlist: "playlist", artista: "artist", album: "album", lista: "ytlist", estoes: "thisis" };
+  const names = { "": "home", buscar: "search", biblioteca: "library", playlist: "playlist", artista: "artist", album: "album", lista: "ytlist", estoes: "thisis", mood: "mood" };
   return { name: names[parts[0]] || "home", args: parts.slice(1) };
 }
 
 function navigate() {
   route = parseRoute();
-  const top = route.name === "playlist" ? "library" : ["artist", "album", "ytlist", "thisis"].includes(route.name) ? "search" : route.name;
+  const top = route.name === "playlist" ? "library" : ["artist", "album", "ytlist", "thisis"].includes(route.name) ? "search" : route.name === "mood" ? "home" : route.name;
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === top));
   $("app").classList.remove("now-open");
   renderPage();
@@ -106,7 +106,7 @@ function navigate() {
 window.addEventListener("hashchange", navigate);
 
 function renderPage() {
-  const pages = { home: pageHome, search: pageSearch, library: pageLibrary, playlist: pagePlaylist, artist: pageArtist, album: pageAlbum, ytlist: pageYtList, thisis: pageThisIs };
+  const pages = { home: pageHome, search: pageSearch, library: pageLibrary, playlist: pagePlaylist, artist: pageArtist, album: pageAlbum, ytlist: pageYtList, thisis: pageThisIs, mood: pageMood };
   $("main").innerHTML = (pages[route.name] || pageHome)();
   markPlaying();
   renderSideList();
@@ -162,6 +162,7 @@ function pageHome() {
       `<button class="tile" data-act="play-recent" data-i="${i}"><div class="tile-art"><img src="${esc(core.artFor(t))}" alt="" loading="lazy" data-fallback></div><div class="tile-title">${esc(t.title)}</div><div class="tile-sub">${esc(t.artist || "")}</div></button>`).join("")}</div>` : "")}
     ${section("Tus playlists", pls.length ? `<div class="shelf">${pls.map((pl) => tile({ href: `#/playlist/${enc(pl.id)}`, title: pl.title, sub: songs(pl.tracks.length), art: pl.artworkUrl || core.artFor(pl.tracks[0]) })).join("")}</div>` : "")}
     ${catalogReady && artists.length ? section("Esto es", `<div class="shelf">${artists.slice(0, 8).map((a) => tile({ href: `#/estoes/${enc(a.name)}`, title: `Esto es ${a.name}`, sub: "Sus éxitos y lo tuyo", art: a.artworkUrl, strip: "Esto es" })).join("")}</div>`) : ""}
+    ${catalogReady ? section("Para cada momento", `<div class="shelf">${core.MOODS.map((m) => `<a class="tile" href="#/mood/${enc(m.id)}"><div class="tile-art mood-art"><span class="mood-name">${esc(m.title)}</span></div><div class="tile-sub">${esc(m.subtitle)}</div></a>`).join("")}</div>`) : ""}
     ${catalogReady && artists.length ? section("Artistas para ti", `<div class="shelf">${artists.map((a) => tile({ href: `#/artista/n/${enc(a.name)}`, title: a.name, art: a.artworkUrl, round: true })).join("")}</div>`) : ""}
     ${!pls.length ? '<p class="notice"><strong>Tu biblioteca está vacía.</strong> Busca cualquier canción y dale a Me gusta o crea una playlist desde aquí. Si enlazas el teléfono (Ajustes, Web y Jam), tus playlists de la app aparecen solas.</p>' : ""}
     ${!catalogReady ? '<p class="notice"><strong>Falta el catálogo completo.</strong> Sin él no hay páginas de artista ni álbum y las búsquedas tienen un límite diario. Se activa en dos minutos: mira «Catálogo completo en la web» en docs/WEB_SYNC.md.</p>' : ""}
@@ -254,6 +255,19 @@ function pageThisIs() {
       image: x.artist.artworkUrl, kicker: "Esto es", title: x.artist.name,
       meta: `${x.hasMine ? "Sus éxitos y lo que tienes tú de este artista" : "Sus canciones más escuchadas"}. ${songs(x.tracks.length)}.`,
       actions: `${saveBtn}${shuffleBtn(listId)}<span class="spacer"></span>${playRound(listId, `Esto es ${x.artist.name}`)}`,
+      body: `${x.hasMine ? '<div class="legend"><span class="tag">Tuya</span><span>de las que tienes en tu biblioteca</span></div>' : '<div class="section"></div>'}${rows(x.tracks, "page")}`,
+    });
+  });
+}
+
+function pageMood() {
+  if (!catalogReady) return needsCatalog("Esta playlist");
+  return remote(pageKey(), () => core.buildMood(route.args[0]), (x) => {
+    const listId = reg("page", x.tracks);
+    return detail({
+      image: x.artworkUrl, kicker: "Para cada momento", title: x.title,
+      meta: `${x.mood.subtitle}. ${songs(x.tracks.length)}.`,
+      actions: `${saveBtn}${shuffleBtn(listId)}<span class="spacer"></span>${playRound(listId, x.title)}`,
       body: `${x.hasMine ? '<div class="legend"><span class="tag">Tuya</span><span>de las que tienes en tu biblioteca</span></div>' : '<div class="section"></div>'}${rows(x.tracks, "page")}`,
     });
   });

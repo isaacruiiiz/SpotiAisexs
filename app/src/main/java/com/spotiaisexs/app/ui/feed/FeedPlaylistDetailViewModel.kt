@@ -35,6 +35,11 @@ sealed interface FeedPlaylistDetailUiState {
         /** Only for "Esto es": the artist, and which songs come from the user's listening. */
         val thisIsArtist: String? = null,
         val mineVideoIds: Set<String> = emptySet(),
+        /** Built playlists ("Esto es", moods): the small word over the big title, and the big title. */
+        val heroKicker: String? = null,
+        val heroTitle: String? = null,
+        /** What the "Tuya" tag means on this playlist. */
+        val mineLegend: String? = null,
     ) : FeedPlaylistDetailUiState
 
     data class Error(val message: String) : FeedPlaylistDetailUiState
@@ -48,6 +53,7 @@ class FeedPlaylistDetailViewModel @Inject constructor(
     private val playlistRepository: PlaylistRepository,
     private val feedRepository: FeedRepository,
     private val thisIsPlaylists: com.spotiaisexs.app.data.thisis.ThisIsPlaylists,
+    private val moodPlaylists: com.spotiaisexs.app.data.mood.MoodPlaylists,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow<FeedPlaylistDetailUiState>(FeedPlaylistDetailUiState.Loading)
     val uiState: StateFlow<FeedPlaylistDetailUiState> = _uiState.asStateFlow()
@@ -68,6 +74,10 @@ class FeedPlaylistDetailViewModel @Inject constructor(
         _uiState.value = previous?.copy(isLoadingMore = true, loadError = null) ?: FeedPlaylistDetailUiState.Loading
         if (com.spotiaisexs.app.data.thisis.ThisIsPlaylists.isThisIs(playlistId)) {
             loadJob = viewModelScope.launch { loadThisIs(playlistId) }
+            return
+        }
+        if (com.spotiaisexs.app.data.mood.MoodPlaylists.isMood(playlistId)) {
+            loadJob = viewModelScope.launch { loadMood(playlistId) }
             return
         }
         loadJob = viewModelScope.launch {
@@ -140,6 +150,28 @@ class FeedPlaylistDetailViewModel @Inject constructor(
                 detail.playlist,
                 thisIsArtist = detail.artistName,
                 mineVideoIds = detail.mineVideoIds,
+                heroKicker = "Esto es",
+                heroTitle = detail.artistName,
+                mineLegend = "de las que más le escuchas",
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            _uiState.value = FeedPlaylistDetailUiState.Error(error.message ?: "No se pudo montar la playlist. Reintenta.")
+        }
+    }
+
+    /** Mood playlists ("Gym", "Años 80"…): YouTube Music's songs for the mood mixed with the user's own. */
+    private suspend fun loadMood(playlistId: String) {
+        try {
+            val detail = moodPlaylists.build(playlistId)
+            kotlin.coroutines.coroutineContext.ensureActive()
+            _uiState.value = FeedPlaylistDetailUiState.Success(
+                detail.playlist,
+                mineVideoIds = detail.mineVideoIds,
+                heroKicker = "Para cada momento",
+                heroTitle = detail.mood.title,
+                mineLegend = "de las que más escuchas tú",
             )
         } catch (error: CancellationException) {
             throw error

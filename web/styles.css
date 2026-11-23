@@ -96,6 +96,10 @@ h1, h2, h3, p { margin: 0; }
 .tile.round { text-align: center; }
 .tile-art { position: relative; }
 .tile-art .strip { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; background: var(--accent); color: var(--on-accent); font: 600 14px/22px "Barlow Condensed", sans-serif; padding: 0 8px; border-radius: 0 0 6px 6px; }
+.mood-art { width: 148px; height: 148px; border-radius: 6px; background: var(--surface-2); position: relative; }
+.mood-art::before { content: ""; position: absolute; left: 0; top: 0; width: 4px; height: 36px; background: var(--accent); }
+.mood-name { position: absolute; left: 12px; right: 10px; bottom: 10px; font: 400 30px/1 "Instrument Serif", serif; }
+.mood-art + .tile-sub { margin-top: 0; }
 .tile-title { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile-sub { font-size: 13px; color: var(--muted); margin-top: -6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 20px 14px; }

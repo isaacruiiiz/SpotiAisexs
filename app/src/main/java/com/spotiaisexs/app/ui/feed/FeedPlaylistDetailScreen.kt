@@ -152,6 +152,7 @@ private fun PlaylistContent(
 ) {
     val playlist = state.playlist
     val thisIsArtist = state.thisIsArtist
+    val heroTitle = state.heroTitle
     val musicPlayer = LocalMusicPlayer.current
     val playback by musicPlayer.chromeState.collectAsStateWithLifecycle()
     val title = playlist.title.ifBlank { "Playlist" }
@@ -188,15 +189,17 @@ private fun PlaylistContent(
                     )
                 },
             ) {
-                if (thisIsArtist != null) {
+                if (heroTitle != null) {
+                    state.heroKicker?.let { kicker ->
+                        Text(
+                            kicker,
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     Text(
-                        "Esto es",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                        thisIsArtist,
-                        style = detailTitleStyle(thisIsArtist),
+                        heroTitle,
+                        style = detailTitleStyle(heroTitle),
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -216,7 +219,7 @@ private fun PlaylistContent(
             val author = playlist.author?.takeIf(String::isNotBlank)
             DetailMeta(
                 when {
-                    thisIsArtist != null && author != null -> "$author. $count."
+                    heroTitle != null && author != null -> "$author. $count."
                     author != null -> "$author, $count"
                     else -> count
                 },
@@ -288,7 +291,8 @@ private fun PlaylistContent(
         }
 
         item(key = "legend") {
-            if (thisIsArtist != null && state.mineVideoIds.isNotEmpty()) {
+            val legend = state.mineLegend
+            if (legend != null && state.mineVideoIds.isNotEmpty()) {
                 Row(
                     Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -296,7 +300,7 @@ private fun PlaylistContent(
                     DetailTag("Tuya")
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        "de las que más le escuchas",
+                        legend,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

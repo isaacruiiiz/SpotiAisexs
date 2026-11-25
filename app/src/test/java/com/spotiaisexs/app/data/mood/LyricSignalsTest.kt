@@ -21,4 +21,13 @@ class LyricSignalsTest {
         assertThat(LyricSignals.analyse("Never give up, stronger every day, I'm a fighter, I'm unstoppable, I rise").motivation).isTrue()
         assertThat(LyricSignals.analyse("Te echo de menos cada día").party).isFalse()
     }
+
+    @Test
+    fun noticesReggaetonAndTrapLyrics() {
+        val urban = "Mami, ella quiere perreo, bellaca en la disco, con flow de la calle, prendemos un phillie y no para"
+        assertThat(LyricSignals.analyse(urban).urban).isTrue()
+        val pop = "Y yo que te quiero tanto, baby, que no puedo vivir sin ti, cuando la noche llega y tú no estás aquí"
+        assertThat(LyricSignals.analyse(pop).urban).isFalse()
+        assertThat(LyricSignals.analyse(pop).version).isEqualTo(LyricSignals.VERSION)
+    }
 }

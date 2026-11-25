@@ -107,7 +107,8 @@ class RadioHomeViewModel @Inject constructor(
 
     init {
         // Learn about the user's songs for "Para cada momento" while they look at the home.
-        viewModelScope.launch(Dispatchers.IO) { runCatching { moodPlaylists.warmUp() } }
+        // It keeps going in the background for as long as the app is open, and only starts once.
+        moodPlaylists.warmUp()
     }
 
     val savedStations: StateFlow<List<SavedStation>> = musicPlayer.savedStations

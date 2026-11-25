@@ -22,7 +22,8 @@ import javax.inject.Singleton
 
 /**
  * What a song's lyrics say, for the mood playlists: the language they are
- * sung in, and whether they talk about partying or about pushing on.
+ * sung in, whether they talk about partying or about pushing on, and whether
+ * they talk the way reggaeton and trap do.
  * [language]: positive = Spanish, negative = English, 0 = can't tell.
  */
 @Serializable
@@ -30,9 +31,13 @@ data class LyricSignal(
     val language: Int = 0,
     val party: Boolean = false,
     val motivation: Boolean = false,
+    /** Reggaeton / trap vocabulary all over the lyrics. */
+    val urban: Boolean = false,
     val instrumental: Boolean = false,
     /** The lyrics were not found: nothing is known, and the song is not looked up again. */
     val missing: Boolean = false,
+    /** Which analysis made this verdict; older ones are read again to learn what they lack. */
+    val version: Int = 1,
 )
 
 /**
@@ -58,7 +63,7 @@ class LyricSignals @Inject constructor(
 
     /** Signals for as many of [songs] (title, artist) as [budgetMs] allows; already known ones are free. */
     suspend fun signalsFor(songs: List<Pair<String, String>>, budgetMs: Long): Map<String, LyricSignal> {
-        val missing = songs.distinctBy { key(it.first, it.second) }.filter { !signals.containsKey(key(it.first, it.second)) }
+        val missing = songs.distinctBy { key(it.first, it.second) }.filter { signals[key(it.first, it.second)].isStale() }
         if (missing.isNotEmpty()) {
             withTimeoutOrNull(budgetMs) {
                 coroutineScope {
@@ -69,8 +74,8 @@ class LyricSignals @Inject constructor(
                                     val text = record?.plainLyrics?.takeIf { it.isNotBlank() }
                                         ?: record?.syncedLyrics?.replace(TIMESTAMP, " ")
                                     signals[key(title, artist)] = when {
-                                        record?.instrumental == true -> LyricSignal(instrumental = true)
-                                        text.isNullOrBlank() -> LyricSignal(missing = true)
+                                        record?.instrumental == true -> LyricSignal(instrumental = true, version = VERSION)
+                                        text.isNullOrBlank() -> LyricSignal(missing = true, version = VERSION)
                                         else -> analyse(text)
                                     }
                                 }
@@ -92,11 +97,16 @@ class LyricSignals @Inject constructor(
     }
 
     companion object {
+        const val VERSION = 2
         private const val KEY = "signals"
         private const val MAX_SAVED = 4_000
         private val TIMESTAMP = Regex("""\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?]""")
         private val PARTY = Regex(
-            "(?i)\\b(fiesta|party|parti|baila|bailar|bailando|dance|dancing|perreo|perrear|discoteca|disco|club|shots?|botella|previa|rumba|gozar|dj|toda la noche|all night|turn up|vacil[oó]n|jangueo)\\b",
+            "(?i)\\b(fiesta|party|parti|baila|bailar|bailando|dance|dancing|perreo|perrear|discoteca|club|shots?|botella|previa|gozar|dj|toda la noche|all night|turn up|vacil[oó]n|jangueo|janguear|pista)\\b",
+        )
+        /** Words reggaeton and trap keep coming back to (and pop barely uses). */
+        private val URBAN = Regex(
+            "(?i)\\b(perreo|perrear|perreando|bellac[oa]s?|bellaqueo|gata|mami|mamacita|shorty|flow|trap|trapero|calle|bichote|bandid[oa]|glock|phillie|blunt|kush|tusi|lean|culo|nalgas|twerk|cabr[oó]n|puta|puto|mera|drip|money|cash|chavos|billetes|lambo|rolex|cartier|gucci|prada|ki[eé]n|real hasta la muerte|dímelo|brr+|prr+|yeh|wuh)\\b",
         )
         private val MOTIVATION = Regex(
             "(?i)\\b(fight|stronger|rise|champion|winners?|believe|unstoppable|never give up|keep going|survivor|power|warrior|fuerza|ganar|luchar|lucha|lev[aá]ntate|campe[oó]n|imparable|sueños|no me rindo|seguir adelante|guerrer[oa])\\b",
@@ -113,11 +123,15 @@ class LyricSignals @Inject constructor(
                         else -> 0
                     }
                 },
-                party = PARTY.findAll(sample).count() >= 3,
+                party = PARTY.findAll(sample).count() >= 4,
                 motivation = MOTIVATION.findAll(sample).count() >= 3,
+                urban = URBAN.findAll(sample).map { it.value.lowercase() }.toSet().size >= 3,
+                version = VERSION,
             )
         }
 
         private const val LANGUAGE_MARGIN = 4
+
+        private fun LyricSignal?.isStale(): Boolean = this == null || (version < VERSION && !missing && !instrumental)
     }
 }

@@ -28,9 +28,14 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Release year and tempo of a song, when a catalogue knows them. */
+/**
+ * Release year, tempo and style of a song, when a catalogue knows them.
+ * [genres] are Deezer's genres for the song's album, lowercased ("pop",
+ * "rap/hip hop", "reggaeton", "dance"…); `null` means they were never looked
+ * up (facts saved by older versions), empty means Deezer has none.
+ */
 @Serializable
-data class TrackFacts(val year: Int? = null, val bpm: Int? = null)
+data class TrackFacts(val year: Int? = null, val bpm: Int? = null, val genres: List<String>? = null)
 
 /**
  * Extra facts the radio switches need and YouTube does not give:
@@ -58,6 +63,9 @@ class RadioMetadata @Inject constructor(
         }
     }
     private val tags = ConcurrentHashMap<String, Set<String>>()
+    private val albumGenres = ConcurrentHashMap<String, List<String>>()
+    private val paceLock = Any()
+    private var nextCallAt = 0L
 
     private fun key(title: String, artist: String) = RadioRecommender.historyKey(title, artist)
 
@@ -65,7 +73,7 @@ class RadioMetadata @Inject constructor(
 
     /** Year and tempo for as many of [tracks] as [budgetMs] allows; cached ones are free. */
     suspend fun factsFor(tracks: List<Pair<String, String>>, budgetMs: Long): Map<String, TrackFacts> {
-        val missing = tracks.distinctBy { key(it.first, it.second) }.filter { !facts.containsKey(key(it.first, it.second)) }
+        val missing = tracks.distinctBy { key(it.first, it.second) }.filter { facts[key(it.first, it.second)]?.genres == null }
         if (missing.isNotEmpty()) {
             withTimeoutOrNull(budgetMs) {
                 coroutineScope {
@@ -84,7 +92,7 @@ class RadioMetadata @Inject constructor(
 
     private fun fetchFacts(title: String, artist: String) {
         val k = key(title, artist)
-        if (facts.containsKey(k)) return
+        if (facts[k]?.genres != null) return
         runCatching {
             val cleanTitle = title.replace(Regex("""\(.*?\)|\[.*?]"""), " ").trim().ifBlank { title }
             val mainArtist = artist.split(",", "&", " feat", " ft", " x ").first().trim().ifBlank { artist }
@@ -93,28 +101,60 @@ class RadioMetadata @Inject constructor(
                 .addQueryParameter("limit", "1")
                 .build()
             val id = getJson(searchUrl.toString())
-                ?.let { it["data"] as? JsonArray }
+                .let { it["data"] as? JsonArray }
                 ?.firstOrNull()
                 ?.let { (it as? JsonObject)?.get("id") as? JsonPrimitive }
                 ?.content
             if (id == null) {
                 // Remember the miss so the same song is not looked up on every batch.
-                facts[k] = TrackFacts()
+                facts[k] = TrackFacts(genres = emptyList())
                 return
             }
-            val track = getJson("https://api.deezer.com/track/$id") ?: return
+            val track = getJson("https://api.deezer.com/track/$id")
             val year = (track["release_date"] as? JsonPrimitive)?.content?.take(4)?.toIntOrNull()?.takeIf { it in 1900..2100 }
             val bpm = (track["bpm"] as? JsonPrimitive)?.content?.toDoubleOrNull()?.toInt()?.takeIf { it > 0 }
-            facts[k] = TrackFacts(year = year, bpm = bpm)
+            val albumId = ((track["album"] as? JsonObject)?.get("id") as? JsonPrimitive)?.content
+            val genres = albumId?.let { album ->
+                albumGenres[album] ?: run {
+                    val data = getJson("https://api.deezer.com/album/$album")["genres"]
+                        ?.let { (it as? JsonObject)?.get("data") as? JsonArray }
+                    data.orEmpty()
+                        .mapNotNull { ((it as? JsonObject)?.get("name") as? JsonPrimitive)?.content?.trim()?.lowercase() }
+                        .filter { it.isNotBlank() }
+                        .also { albumGenres[album] = it }
+                }
+            }.orEmpty()
+            facts[k] = TrackFacts(year = year, bpm = bpm, genres = genres)
         }.onFailure { Log.d(TAG, "Deezer lookup failed for $title", it) }
+        // A failure (no network, Deezer's per-second quota) is not saved: it is tried again next time.
     }
 
-    private fun getJson(url: String): JsonObject? =
-        client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+    /**
+     * A Deezer answer, or an exception. Deezer reports errors (its quota of
+     * about 50 calls every 5 seconds above all) inside a normal answer; they
+     * must not be taken for "this song is not in Deezer".
+     */
+    private fun getJson(url: String): JsonObject {
+        pace()
+        return client.newCall(Request.Builder().url(url).header("Accept-Language", "en").build()).execute().use { response ->
             val body = response.body?.string()
-            if (!response.isSuccessful || body.isNullOrBlank()) null
-            else json.parseToJsonElement(body).jsonObject.takeIf { "error" !in it }
+            if (!response.isSuccessful || body.isNullOrBlank()) throw java.io.IOException("Deezer HTTP ${response.code}")
+            val obj = json.parseToJsonElement(body).jsonObject
+            if ("error" in obj) throw java.io.IOException("Deezer error: ${obj["error"]}")
+            obj
         }
+    }
+
+    /** Keeps calls to Deezer under its quota, however many lookups run at once. */
+    private fun pace() {
+        val wait = synchronized(paceLock) {
+            val now = System.nanoTime() / 1_000_000
+            val at = maxOf(now, nextCallAt)
+            nextCallAt = at + DEEZER_GAP_MS
+            at - now
+        }
+        if (wait > 0) Thread.sleep(wait)
+    }
 
     private fun persist() {
         runCatching {
@@ -184,5 +224,6 @@ class RadioMetadata @Inject constructor(
         const val TAG = "RadioMetadata"
         const val KEY_FACTS = "facts"
         const val MAX_FACTS = 4000
+        const val DEEZER_GAP_MS = 115L
     }
 }

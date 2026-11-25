@@ -191,6 +191,7 @@ class ConnectSync @Inject constructor(
     private val innerTube: InnerTubeMusicApi,
     okHttpClient: OkHttpClient,
     private val applicationScope: CoroutineScope,
+    private val moodPlaylists: dagger.Lazy<com.spotiaisexs.app.data.mood.MoodPlaylists>,
 ) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
     private val http = okHttpClient.newBuilder().cache(null).callTimeout(20, TimeUnit.SECONDS).build()
@@ -365,6 +366,7 @@ class ConnectSync @Inject constructor(
             launch { observePlayer() }
             launch { libraryLoop() }
             launch { commandPollLoop() }
+            launch { moodPublishLoop() }
             launch { streamLoop("devices") { _, _ -> refreshDevices() } }
             launch { streamLoop("libraryInbox") { _, _ -> drainLibraryInbox() } }
             launch { streamLoop("jam") { _, _ -> refreshJam() } }
@@ -1167,6 +1169,56 @@ class ConnectSync @Inject constructor(
 
     private fun serverTimestamp(): JsonObject = buildJsonObject { put(".sv", "timestamp") }
 
+    /**
+     * The web cannot learn a song's tempo or read its lyrics, so the phone
+     * builds the mood playlists ("Gym", "Años 80"…) and leaves them at
+     * users/{uid}/moods for the web to show: a while after connecting, then
+     * every few hours, one mood after another so it never weighs on playback.
+     */
+    private suspend fun moodPublishLoop() {
+        delay(MOOD_FIRST_DELAY_MS)
+        while (currentScopeActive()) {
+            val moods = moodPlaylists.get()
+            for (mood in com.spotiaisexs.app.data.mood.Mood.entries) {
+                if (!currentScopeActive()) return
+                val detail = runCatching {
+                    moods.build(com.spotiaisexs.app.data.mood.MoodPlaylists.idFor(mood), maxAgeMs = MOOD_REFRESH_MS)
+                }.getOrNull()
+                val body = buildJsonObject {
+                    put("title", mood.title)
+                    put("subtitle", mood.subtitle)
+                    put("builtAt", serverTimestamp())
+                    if (detail != null) {
+                        put("artworkUrl", detail.playlist.artworkUrl.orEmpty())
+                        put(
+                            "tracks",
+                            kotlinx.serialization.json.buildJsonArray {
+                                detail.playlist.tracks.forEach { track ->
+                                    add(
+                                        buildJsonObject {
+                                            put("title", track.title)
+                                            put("artist", track.artist)
+                                            put("videoId", track.videoId)
+                                            track.artworkUrl?.let { put("artworkUrl", it) }
+                                            track.durationSeconds?.let { put("durationMs", it * 1_000L) }
+                                            if (track.videoId in detail.mineVideoIds) put("mine", true)
+                                        },
+                                    )
+                                }
+                            },
+                        )
+                    } else {
+                        put("empty", com.spotiaisexs.app.data.mood.MoodPlaylists.emptyMessage(mood))
+                    }
+                }
+                runCatching { rest("PUT", "moods/${mood.id}", body.toString()) }
+                    .onFailure { Log.w(TAG, "Mood publish failed for ${mood.id}", it) }
+                delay(MOOD_GAP_MS)
+            }
+            delay(MOOD_REFRESH_MS)
+        }
+    }
+
     private suspend fun currentScopeActive(): Boolean =
         kotlinx.coroutines.currentCoroutineContext().isActive
 
@@ -1196,6 +1248,9 @@ class ConnectSync @Inject constructor(
         const val QUEUE_PUBLISH_LIMIT = 50
         const val COMMAND_MAX_AGE_MS = 30_000L
         const val COMMAND_POLL_PLAYING_MS = 4_000L
+        const val MOOD_FIRST_DELAY_MS = 90_000L
+        const val MOOD_GAP_MS = 5_000L
+        const val MOOD_REFRESH_MS = 6 * 60 * 60 * 1000L
         const val COMMAND_POLL_IDLE_MS = 12_000L
         val OWNER_FIELDS = listOf("activeDevice", "activeDeviceName", "activeDeviceType")
         const val TAKEOVER_SEEK_TIMEOUT_MS = 20_000L

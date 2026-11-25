@@ -101,8 +101,14 @@ class RadioHomeViewModel @Inject constructor(
     private val musicPlayer: MusicPlayer,
     private val songPlayStats: SongPlayStatsRepository,
     private val playlistRepository: PlaylistRepository,
+    private val moodPlaylists: com.spotiaisexs.app.data.mood.MoodPlaylists,
 ) : ViewModel() {
     val tuning: StateFlow<RadioTuning> = musicPlayer.radioTuning
+
+    init {
+        // Learn about the user's songs for "Para cada momento" while they look at the home.
+        viewModelScope.launch(Dispatchers.IO) { runCatching { moodPlaylists.warmUp() } }
+    }
 
     val savedStations: StateFlow<List<SavedStation>> = musicPlayer.savedStations
 

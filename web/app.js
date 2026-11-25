@@ -162,7 +162,7 @@ function pageHome() {
       `<button class="tile" data-act="play-recent" data-i="${i}"><div class="tile-art"><img src="${esc(core.artFor(t))}" alt="" loading="lazy" data-fallback></div><div class="tile-title">${esc(t.title)}</div><div class="tile-sub">${esc(t.artist || "")}</div></button>`).join("")}</div>` : "")}
     ${section("Tus playlists", pls.length ? `<div class="shelf">${pls.map((pl) => tile({ href: `#/playlist/${enc(pl.id)}`, title: pl.title, sub: songs(pl.tracks.length), art: pl.artworkUrl || core.artFor(pl.tracks[0]) })).join("")}</div>` : "")}
     ${catalogReady && artists.length ? section("Esto es", `<div class="shelf">${artists.slice(0, 8).map((a) => tile({ href: `#/estoes/${enc(a.name)}`, title: `Esto es ${a.name}`, sub: "Sus éxitos y lo tuyo", art: a.artworkUrl, strip: "Esto es" })).join("")}</div>`) : ""}
-    ${catalogReady ? section("Para cada momento", `<div class="shelf">${core.MOODS.map((m) => `<a class="tile" href="#/mood/${enc(m.id)}"><div class="tile-art mood-art"><span class="mood-name">${esc(m.title)}</span></div><div class="tile-sub">${esc(m.subtitle)}</div></a>`).join("")}</div>`) : ""}
+    ${moodsSection()}
     ${catalogReady && artists.length ? section("Artistas para ti", `<div class="shelf">${artists.map((a) => tile({ href: `#/artista/n/${enc(a.name)}`, title: a.name, art: a.artworkUrl, round: true })).join("")}</div>`) : ""}
     ${!pls.length ? '<p class="notice"><strong>Tu biblioteca está vacía.</strong> Busca cualquier canción y dale a Me gusta o crea una playlist desde aquí. Si enlazas el teléfono (Ajustes, Web y Jam), tus playlists de la app aparecen solas.</p>' : ""}
     ${!catalogReady ? '<p class="notice"><strong>Falta el catálogo completo.</strong> Sin él no hay páginas de artista ni álbum y las búsquedas tienen un límite diario. Se activa en dos minutos: mira «Catálogo completo en la web» en docs/WEB_SYNC.md.</p>' : ""}
@@ -260,16 +260,33 @@ function pageThisIs() {
   });
 }
 
+/** Fila "Para cada momento": las playlists de mood que el teléfono ya ha montado con tus canciones. */
+function moodsSection() {
+  const ready = core.readyMoods();
+  if (!ready.length) {
+    return Object.keys(S.devices).some((id) => S.devices[id]?.type === "phone") || Object.keys(S.moods).length
+      ? ""
+      : section("Para cada momento", '<p class="notice">Tus playlists de mood (Gym, Chill, Pop español, décadas…) las monta el teléfono con tus canciones. Abre la app con la web enlazada y aparecerán aquí en unos minutos.</p>');
+  }
+  return section("Para cada momento", `<div class="shelf">${ready.map((m) => `<a class="tile" href="#/mood/${enc(m.id)}"><div class="tile-art mood-art"><span class="mood-name">${esc(m.title)}</span></div><div class="tile-sub">${esc(m.subtitle || "")}</div></a>`).join("")}</div>`);
+}
+
 function pageMood() {
-  if (!catalogReady) return needsCatalog("Esta playlist");
-  return remote(pageKey(), () => core.buildMood(route.args[0]), (x) => {
-    const listId = reg("page", x.tracks);
-    return detail({
-      image: x.artworkUrl, kicker: "Para cada momento", title: x.title,
-      meta: `${x.mood.subtitle}. ${songs(x.tracks.length)}.`,
-      actions: `${saveBtn}${shuffleBtn(listId)}<span class="spacer"></span>${playRound(listId, x.title)}`,
-      body: `${x.hasMine ? '<div class="legend"><span class="tag">Tuya</span><span>de las que tienes en tu biblioteca</span></div>' : '<div class="section"></div>'}${rows(x.tracks, "page")}`,
-    });
+  const id = route.args[0];
+  const base = core.MOODS.find((m) => m.id === id);
+  const x = { ...(base || {}), ...(S.moods[id] || {}) };
+  if (!base) return `<div class="empty">${backButton()}<p>Esta playlist no existe.</p></div>`;
+  const tracks = (x.tracks || []).filter((t) => t?.videoId);
+  if (!tracks.length) {
+    return `<div class="empty">${backButton()}<p>${esc(x.empty || "Esta playlist se monta en el teléfono con tus canciones. Abre la app con la web enlazada y aparecerá en unos minutos.")}</p></div>`;
+  }
+  const listId = reg("page", tracks);
+  const hasMine = tracks.some((t) => t.mine);
+  return detail({
+    image: x.artworkUrl || tracks[0].artworkUrl, kicker: "Para cada momento", title: x.title,
+    meta: `${x.subtitle || ""}. ${songs(tracks.length)}.`,
+    actions: `${saveBtn}${shuffleBtn(listId)}<span class="spacer"></span>${playRound(listId, x.title)}`,
+    body: `${hasMine ? '<div class="legend"><span class="tag">Tuya</span><span>las tuyas; el resto son nuevas, parecidas a las tuyas</span></div>' : '<div class="section"></div>'}${rows(tracks, "page")}`,
   });
 }
 
@@ -569,7 +586,8 @@ document.addEventListener("click", (e) => {
     case "top-more": openTrackMenu(search.results?.songs[0], actEl); break;
     case "artist-radio": { const seed = page[Math.floor(Math.random() * Math.min(5, page.length))]; if (seed) core.startRadio(seed, { label: `Emisora de ${data?.name || seed.artist}` }); break; }
     case "show-all": pageCache.get(pageKey()).all = true; renderPage(); break;
-    case "save-list": if (data) core.createPlaylist(route.name === "thisis" ? `Esto es ${data.artist.name}` : data.title, data.tracks, route.name === "thisis" ? data.artist.artworkUrl : data.artworkUrl); break;
+    case "save-list": if (route.name === "mood") { const m = core.readyMoods().find((x) => x.id === route.args[0]); if (m) core.createPlaylist(m.title, m.tracks, m.artworkUrl); break; }
+      if (data) core.createPlaylist(route.name === "thisis" ? `Esto es ${data.artist.name}` : data.title, data.tracks, route.name === "thisis" ? data.artist.artworkUrl : data.artworkUrl); break;
     case "new-playlist": openNewPlaylist(actEl); break;
   }
 });

@@ -161,7 +161,7 @@ class FeedPlaylistDetailViewModel @Inject constructor(
         }
     }
 
-    /** Mood playlists ("Gym", "Años 80"…): YouTube Music's songs for the mood mixed with the user's own. */
+    /** Mood playlists ("Gym", "Años 80"…): the user's songs that fit the mood, plus new ones like them. */
     private suspend fun loadMood(playlistId: String) {
         try {
             val detail = moodPlaylists.build(playlistId)
@@ -171,7 +171,7 @@ class FeedPlaylistDetailViewModel @Inject constructor(
                 mineVideoIds = detail.mineVideoIds,
                 heroKicker = "Para cada momento",
                 heroTitle = detail.mood.title,
-                mineLegend = "de las que más escuchas tú",
+                mineLegend = "las tuyas; el resto son nuevas, parecidas a las tuyas",
             )
         } catch (error: CancellationException) {
             throw error
